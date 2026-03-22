@@ -26,10 +26,9 @@ struct raylib_font : public font {
     UnloadFont(m_font);
   }
 
-  auto measure(const std::string& text, int m_fontsize) const -> vec2i override {
-    const float spacing = m_fontsize * 0.1f;
+  auto measure(const std::string& text, int font_size, int spacing) const -> vec2i override {
     const Vector2 size  = MeasureTextEx(m_font, text.c_str(),
-                                        static_cast<float>(m_fontsize), spacing);
+                                        static_cast<float>(font_size), static_cast<float>(spacing));
     return { static_cast<int>(size.x), static_cast<int>(size.y) };
   }
 
@@ -71,9 +70,7 @@ private:
 
 struct raylib_renderer: public renderer {
 
-  raylib_renderer() {
-    SetConfigFlags(FLAG_MSAA_4X_HINT);
-  }
+  raylib_renderer() = default;
 
   void render(render_queue& queue)
   {
@@ -93,58 +90,67 @@ struct raylib_renderer: public renderer {
                cmd.content);
   }
 private:
-
   void render_rect(const render_cmd& cmd)
   {
-    DrawRectangleRounded({
-      static_cast<float>(cmd.pos.x),
-      static_cast<float>(cmd.pos.y),
-      static_cast<float>(cmd.size.x),
-      static_cast<float>(cmd.size.y)
-    },
-                         cmd.style.border_radius.value_or({}).top_left() * 0.01f,//TODO: implement a DrawRectangleRounded function 
-                         10,
-                         Color{
-                         static_cast<unsigned char>(cmd.style.background_color.value_or({}).get_r()),
-                         static_cast<unsigned char>(cmd.style.background_color.value_or({}).get_g()),
-                         static_cast<unsigned char>(cmd.style.background_color.value_or({}).get_b()),
-                         static_cast<unsigned char>(cmd.style.background_color.value_or({}).get_a())
-                         });
-    DrawRectangleRoundedLinesEx({
-      static_cast<float>(cmd.pos.x),
-      static_cast<float>(cmd.pos.y),
-      static_cast<float>(cmd.size.x),
-      static_cast<float>(cmd.size.y)
-    },
-                                cmd.style.border_radius.value_or({}).top_left() * 0.01f,//TODO: implement a DrawRectangleRounded function 
-                                10, cmd.style.border_size.value_or(0),
-                                Color{
-                                static_cast<unsigned char>(cmd.style.border_color.value_or({}).get_r()),
-                                static_cast<unsigned char>(cmd.style.border_color.value_or({}).get_g()),
-                                static_cast<unsigned char>(cmd.style.border_color.value_or({}).get_b()),
-                                static_cast<unsigned char>(cmd.style.border_color.value_or({}).get_a())
-                                });
+    auto content = std::get<primitive::rect>(cmd.content);
+    DrawRectangleRounded(
+      {
+        static_cast<float>(cmd.pos.x),
+        static_cast<float>(cmd.pos.y),
+        static_cast<float>(content.size.x),
+        static_cast<float>(content.size.y)
+      },
+      content.border_radius,//TODO: implement a DrawRectangleRounded function 
+      20,
+      Color{
+        static_cast<unsigned char>(content.color.get_r()),
+        static_cast<unsigned char>(content.color.get_g()),
+        static_cast<unsigned char>(content.color.get_b()),
+        static_cast<unsigned char>(content.color.get_a())
+      }
+    );
+    if (content.border_size > 0)
+      DrawRectangleRoundedLinesEx(
+        {
+          static_cast<float>(cmd.pos.x),
+          static_cast<float>(cmd.pos.y),
+          static_cast<float>(content.size.x),
+          static_cast<float>(content.size.y)
+        },
+        content.border_radius,//TODO: implement a DrawRectangleRounded function 
+        20,
+        content.border_size > 0 ? (content.border_size + 0.1f) : 0.0f,
+        Color{
+          static_cast<unsigned char>(content.border_color.get_r()),
+          static_cast<unsigned char>(content.border_color.get_g()),
+          static_cast<unsigned char>(content.border_color.get_b()),
+          static_cast<unsigned char>(content.border_color.get_a())
+        }
+      );
   }
+  
   void render_img (const render_cmd& cmd)
   {
 
   }
+
   void render_text(const render_cmd& cmd)
   {
+    auto content = std::get<primitive::text>(cmd.content);
     DrawTextEx(
-      dynamic_cast<const raylib_font*>(&cmd.style.display_font.value().get())->raw(),
+      dynamic_cast<const raylib_font*>(&content.font.get())->raw(),
       std::get<primitive::text>(cmd.content).text.data(),
       Vector2{
         static_cast<float>(cmd.pos.x),
         static_cast<float>(cmd.pos.y)
       },
-      cmd.style.font_size.value_or(defaults::font_size),
-      0,
+      static_cast<float>(content.font_size),
+      static_cast<float>(content.letter_spacing),
       Color{
-        static_cast<unsigned char>(cmd.style.color.value_or(color{}).get_r()),
-        static_cast<unsigned char>(cmd.style.color.value_or(color{}).get_g()),
-        static_cast<unsigned char>(cmd.style.color.value_or(color{}).get_b()),
-        static_cast<unsigned char>(cmd.style.color.value_or(color{}).get_a())
+        static_cast<unsigned char>(content.text_color.get_r()),
+        static_cast<unsigned char>(content.text_color.get_g()),
+        static_cast<unsigned char>(content.text_color.get_b()),
+        static_cast<unsigned char>(content.text_color.get_a())
       }
     );
   }

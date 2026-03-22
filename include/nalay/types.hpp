@@ -12,6 +12,7 @@ struct vec2 {
   T x, y;
 
   constexpr vec2() = default;
+  constexpr vec2(T _x) : x(_x), y(0) {}
   constexpr vec2(T _x, T _y) : x(_x), y(_y) {}
 
   constexpr auto operator+(const vec2& rhs) const -> vec2  { return {x + rhs.x, y + rhs.y}; }
@@ -30,6 +31,8 @@ struct vec3 {
   T x, y, z;
 
   constexpr vec3() = default;
+  constexpr vec3(T _x) : x(_x), y(0), z(0) {}
+  constexpr vec3(T _x, T _y) : x(_x), y(_y), z(0) {}
   constexpr vec3(T _x, T _y, T _z) : x(_x), y(_y), z(_z) {}
 
   constexpr auto operator+(const vec3& rhs) const -> vec3  { return {x + rhs.x, y + rhs.y, z + rhs.z}; }
@@ -48,6 +51,9 @@ struct vec4 {
   T x, y, z, w;
 
   constexpr vec4() = default;
+  constexpr vec4(T _x) : x(_x), y(0), z(0), w(0) {}
+  constexpr vec4(T _x, T _y) : x(_x), y(y), z(0), w(0) {}
+  constexpr vec4(T _x, T _y, T _z) : x(_x), y(_y), z(_z), w(0) {}
   constexpr vec4(T _x, T _y, T _z, T _w) : x(_x), y(_y), z(_z), w(_w) {}
 
   constexpr auto operator+(const vec4& rhs) const -> vec4  { return {x + rhs.x, y + rhs.y, z + rhs.z, w + rhs.w}; }
@@ -63,10 +69,10 @@ struct vec4 {
 
 struct insets {
   constexpr insets() = default;
-  constexpr insets(int top_left) : m_val{top_left, 0, 0, 0} {}
-  constexpr insets(int top_left, int top_right) : m_val{top_left, top_right, 0, 0} {}
-  constexpr insets(int top_left, int top_right, int bottom_left) : m_val{top_left, top_right, bottom_left, 0} {}
-  constexpr insets(int top_left, int top_right, int bottom_left, int bottom_right) : m_val{top_left, top_right, bottom_left, bottom_right} {}
+  constexpr insets(int top) : m_val{top, 0, 0, 0} {}
+  constexpr insets(int x, int y) : m_val{y, y, x, x} {}
+  constexpr insets(int top, int bottom, int left) : m_val{top, bottom, left, 0} {}
+  constexpr insets(int top, int bottom, int left, int right) : m_val{top, bottom, left, right} {}
 
   static constexpr auto all(int val)                -> insets { return insets{val, val, val, val}; }
   static constexpr auto top(int val)                -> insets { return insets{ val, val }; }
@@ -74,10 +80,10 @@ struct insets {
   static constexpr auto bottom(int val)             -> insets { return insets{0, 0, val, val }; }
   static constexpr auto bottom(int left, int right) -> insets { return insets{ 0, 0, left, right }; }
 
-  auto top_left()     const -> int { return m_val.x; }
-  auto top_right()    const -> int { return m_val.y; }
-  auto bottom_left()  const -> int { return m_val.z; }
-  auto bottom_right() const -> int { return m_val.w; }
+  auto top()    const -> int { return m_val.x; }
+  auto bottom() const -> int { return m_val.y; }
+  auto left()   const -> int { return m_val.z; }
+  auto right()  const -> int { return m_val.w; }
 private:
   vec4<int> m_val;
 };
@@ -123,7 +129,7 @@ struct color {
   auto get_b_float() const -> float { return m_val.z / 255.0f; }
   auto get_a_float() const -> float { return m_val.w / 255.0f; }
 
-  static constexpr auto black()  -> color { return color{0, 0, 0, 0}; }
+  static constexpr auto black()  -> color { return color{0, 0, 0, 255}; }
   static constexpr auto white()  -> color { return color{255, 255, 255, 255}; }
   static constexpr auto red()    -> color { return color{255, 0, 0, 255}; }
   static constexpr auto green()  -> color { return color{0, 255, 0, 255}; }

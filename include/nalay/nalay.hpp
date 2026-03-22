@@ -32,6 +32,13 @@
 //TODO: change storage of nodes from tuple to slab allocator ? <==> Nodes might need to have persistent lifetime
 //                                                                  EX: getting the size of an element at runtime or dynamic rendering
 
+//TODO: compute text wrap based on parent width
+
+
+//NOTE: figure out how styling of subelements should  work
+//maybe button logic and text logic should be decoupled such that user can control the individual styling of the text
+//inside buttons ???
+
 // Enum Declarations
 
 enum class render_cmd_type: uint8_t {
@@ -52,23 +59,32 @@ enum class alignment : uint8_t {
 // Struct Declarations
 
 struct style {
-  std::optional<insets>                               padding;
-  std::optional<insets>                               margin;
-  std::optional<int>                                  border_size;
-  std::optional<::color>                              border_color;
-  std::optional<::color>                              background_color;
-  std::optional<::color>                              color;
-  std::optional<std::pair<::alignment,::alignment>>   alignment;
-  std::optional<vec2i>                                size;
-  std::optional<insets>                               border_radius;
-  std::optional<int>                                  font_size;
-  std::optional<std::reference_wrapper<const font>>   display_font;
+  std::optional<insets> padding;
+  std::optional<insets> margin;
+  std::optional<int> border_size;
+  std::optional<::color> border_color;
+  std::optional<::color> background_color;
+  std::optional<::color> color;
+  std::optional<std::pair<::alignment,::alignment>> alignment;
+  std::optional<std::reference_wrapper<const font>> display_font;
+  std::optional<vec2i> size;
+  std::optional<int> border_radius;
+  std::optional<int> letter_spacing;
+  std::optional<int> font_size;
 };
 
 namespace primitive {
 
 struct text {
+  std::reference_wrapper<const ::font> font;
   std::string text;
+  ::color text_color;
+  ::color outline_color;
+  vec2i size;
+  vec2i pos;
+  int outline_thickness;
+  int font_size;
+  int letter_spacing;
 };
 
 struct img {
@@ -80,8 +96,8 @@ struct rect {
   ::color color;
   ::color border_color;
   int border_radius;
-  int width;
-  int height;
+  int border_size;
+  vec2i size;
 };
 
 } // namespace primitive
@@ -92,8 +108,6 @@ struct render_cmd {
     primitive::img,
     primitive::rect
   > content;
-  ::style style;
-  vec2i size;
   vec2i pos;
 };
 
@@ -325,8 +339,6 @@ private:
   std::vector<node_record> m_records;
   std::unique_ptr<aligned_storage> m_storage;
   size_t m_current{};
-public:
-
 };
 
 template<typename Tuple, typename Func, std::size_t... Is>
@@ -356,11 +368,11 @@ struct node {
   }
 
   auto padding(this auto&& self, insets p) { self.m_style.padding = p; return self; }
-  auto margin(this auto&& self, insets m) { self.m_style.margin = m; return self; }
+  auto margin(this auto&& self, insets m)  { self.m_style.margin = m; return self; }
   auto bg_color(this auto&& self, ::color color) { self.m_style.background_color = color; return self; }
   auto color(this auto&& self, ::color color) { self.m_style.color = color; return self; }
   auto size(this auto&& self, int width, int height) { self.m_style.size = vec2i{width, height}; return self; }
-  auto border_radius(this auto&& self, insets border_radius) { self.m_style.border_radius = border_radius; return self; }
+  auto border_radius(this auto&& self, int border_radius) { self.m_style.border_radius = border_radius; return self; }
   auto font_size(this auto&& self, int font_size) { self.m_style.font_size = font_size; return self; }
   auto display_font(this auto&& self, std::reference_wrapper<const font> display_font) { self.m_style.display_font = display_font; return self; }
   auto align(this auto&& self, std::pair<::alignment, ::alignment> alignment) { self.x_align(alignment.first); self.y_align(alignment.second); return self; }
@@ -410,34 +422,42 @@ struct button : node {
     (void) parent;
     vec2i sz{};
 
-    size_t start = queue.current();
-
-    auto size      = measure(ctx);
-    auto text_size = ctx.fonts.get().default_font().measure(text, defaults::font_size);
-    vec2i bg_pos          = {};
-    vec2i text_pos        = {
-      bg_pos.x + (size.x - text_size.x) / 2,
-      bg_pos.y + (size.y - text_size.y) / 2
+    size_t start          = queue.current();
+    auto size             = measure(ctx);
+    auto text_size        = m_style.display_font.value_or(ctx.fonts.get().default_font()).get().measure(
+      text,
+      m_style.font_size.value_or(defaults::font_size),
+      m_style.letter_spacing.value_or(0)
+    );
+    auto bg_pos           = vec2i{};
+    auto text_pos         = vec2i{
+      static_cast<int>(bg_pos.x + (size.x - text_size.x) * 0.5f),
+      static_cast<int>(bg_pos.y + (size.y - text_size.y) * 0.5f)
     };
-
-    m_style.border_radius    = m_style.border_radius.value_or(defaults::button_border_radius);
-    m_style.border_size      = m_style.border_size.value_or(defaults::button_border_size);
-    m_style.background_color = m_style.background_color.value_or(defaults::button_background);
-    m_style.border_color     = m_style.border_color.value_or(defaults::button_border_color);
-    m_style.color            = m_style.border_color.value_or(color::black());
-    m_style.display_font     = m_style.display_font.value_or(ctx.fonts.get().default_font());
-
+  
     auto bg = queue.emplace(
-      primitive::rect{},
-      m_style,
-      size,
+      primitive::rect{
+        .color         = m_style.background_color.value_or(defaults::button_background),
+        .border_color  = m_style.border_color.value_or(defaults::button_border_color),
+        .border_radius = m_style.border_radius.value_or(defaults::button_border_radius),
+        .border_size   = m_style.border_size.value_or(defaults::button_border_size),
+        .size          = size,
+      },
       bg_pos
     );
 
     auto fg = queue.emplace(
-      primitive::text{text},
-      m_style,
-      text_size,
+      primitive::text{
+        .font              = m_style.display_font.value_or(ctx.fonts.get().default_font()),
+        .text              = text,
+        .text_color        = m_style.color.value_or(color::black()), //TODO: define defaults here
+        .outline_color     = m_style.border_color.value_or(color::black()),
+        .size              = text_size,
+        .pos               = bg_pos,
+        .outline_thickness = 0,//TODO: figure out this shiiih
+        .font_size         = m_style.font_size.value_or(defaults::font_size),
+        .letter_spacing    = m_style.letter_spacing.value_or(0),
+      },
       text_pos
     );
     queue.push_record(start, queue.current(), measure(ctx));
@@ -448,11 +468,10 @@ struct button : node {
       return ctx.fonts.get().default_font();
     };
     const auto& f       = m_style.display_font.value_or(get_default());
-    const int   fs      = m_style.font_size.value_or(defaults::font_size);
-    const vec2i text_sz = f.get().measure(text, fs);
-    const int   pad_x   = defaults::padding * 4;
-    const int   pad_y   = static_cast<int>(defaults::padding * 2) * 2;
-    return { text_sz.x + pad_x, text_sz.y + pad_y };
+    int   fs      = m_style.font_size.value_or(defaults::font_size);
+    vec2i text_sz = f.get().measure(text, fs, m_style.letter_spacing.value_or(0));
+    auto padding  = m_style.padding.value_or(insets{ defaults::button_padding.x, defaults::button_padding.y });
+    return { text_sz.x + padding.left() + padding.right(), text_sz.y + padding.top() + padding.bottom() };
   }
 };
 
@@ -483,18 +502,20 @@ struct layout : node {
     auto size = measure(ctx);
 
     auto bg = queue.emplace(
-      primitive::rect{},
-      m_style,
-      size,
+      primitive::rect{
+        .color         = m_style.background_color.value_or({}),
+        .border_color  = m_style.border_color.value_or({}),
+        .border_radius = m_style.border_radius.value_or(0),
+        .size          = size,
+      },
       vec2i{}
     );
-
 
     create_children(queue, ctx);
     layout_children(queue, ctx, { record_start, queue.records().size() });
 
-    queue.trim_records(record_start);    // discard child records
-    queue.push_record(byte_start, queue.current(), measure(ctx)); // one self-record
+    queue.trim_records(record_start);
+    queue.push_record(byte_start, queue.current(), measure(ctx));
   }
 
   auto measure(const layout_ctx& ctx) -> vec2i override {
@@ -530,10 +551,10 @@ struct layout : node {
     for (auto i = range.first; i < range.second; i++) {
       auto record = queue.records().at(i);
       if (dir_ == direction::vertical) {
-        children_size.y += record.computed_size.y;
+        children_size.y += record.computed_size.y + defaults::padding;
         children_size.x = std::max(children_size.x, record.computed_size.x);
       } else {
-        children_size.x += record.computed_size.x;
+        children_size.x += record.computed_size.x + defaults::padding;
         children_size.y = std::max(children_size.y, record.computed_size.y);
       }
     }

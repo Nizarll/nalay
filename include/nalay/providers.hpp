@@ -44,8 +44,8 @@ struct font {
   void operator=(const font&) = delete;
   void operator=(font&&)      = delete;
 
-  virtual auto measure(const std::string& text, int font_size) const -> vec2i        = 0;
-  virtual auto get_metrics()                                   const -> font_metrics = 0;
+  virtual auto measure(const std::string& text, int font_size, int spacing) const -> vec2i        = 0;
+  virtual auto get_metrics()                                                const -> font_metrics = 0;
 };
 
 struct font_provider {

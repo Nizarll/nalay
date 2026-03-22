@@ -1,13 +1,13 @@
 {
   "name": "nalay",
   "version-semver": "0.1.0",
+  "builtin-baseline": "d7112d1a4fb50410d3639f5f586972591d848beb",
   "dependencies": [
     {
       "name": "fmt",
       "version>=": "11.0.2#1"
     }
   ],
-  "default-features": [],
   "features": {
     "test": {
       "description": "Dependencies for testing",
@@ -18,6 +18,5 @@
         }
       ]
     }
-  },
-  "builtin-baseline": "d7112d1a4fb50410d3639f5f586972591d848beb"
+  }
 }
