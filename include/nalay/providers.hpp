@@ -1,10 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string_view>
 #include "types.hpp"
+#include "allocators.hpp"
 
 enum class image_format {
   rgba8,
@@ -73,9 +74,19 @@ struct image_provider {
   virtual auto size_of(std::string_view name)      const -> vec2i = 0;
 };
 
+namespace ui { struct node; } // hacky fix
+
 struct layout_ctx {
+  slab_allocator<ui::node*> node_allocator; // Storage is shared via shared_ptr
   std::reference_wrapper<font_provider> fonts;
-  std::optional<std::reference_wrapper<image_provider>> images;
+
+  template <typename T, typename... Args> 
+  requires std::derived_from<T, ui::node>
+  auto make_node(Args&&... args) -> T* {
+    T* ptr = node_allocator.allocate_as<T>(1);
+    if (!ptr) throw std::bad_alloc();
+    return std::construct_at(ptr, std::forward<Args>(args)...);
+  }
 };
 
 template<typename T>

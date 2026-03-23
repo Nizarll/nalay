@@ -1,8 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <type_traits>
 #include <ostream>
-
 
 template<typename T>
 concept Number = std::is_arithmetic_v<T>;
@@ -23,6 +23,8 @@ struct vec2 {
   constexpr auto operator-=(const vec2& rhs)      -> vec2& { x -= rhs.x; y -= rhs.y; return *this; }
   constexpr auto operator*=(T scalar)             -> vec2& { x *= scalar; y *= scalar; return *this; }
   constexpr auto operator/=(T scalar)             -> vec2& { x /= scalar; y /= scalar; return *this; }
+  constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y); }
+
   friend    auto operator<<(std::ostream& os, const vec2& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ")"; }
 };
 
@@ -43,6 +45,8 @@ struct vec3 {
   constexpr auto operator-=(const vec3& rhs)      -> vec3& { x -= rhs.x; y -= rhs.y; z -= rhs.z; return *this; }
   constexpr auto operator*=(T scalar)             -> vec3& { x *= scalar; y *= scalar; z *= scalar; return *this; }
   constexpr auto operator/=(T scalar)             -> vec3& { x /= scalar; y /= scalar; z /= scalar; return *this; }
+  constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y + z * z); }
+
   friend    auto operator<<(std::ostream& os, const vec3& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ", " << v.z << ")"; }
 };
 
@@ -64,28 +68,36 @@ struct vec4 {
   constexpr auto operator-=(const vec4& rhs)      -> vec4& { x -= rhs.x; y -= rhs.y; z -= rhs.z; w -= rhs.w; return *this; }
   constexpr auto operator*=(T scalar)             -> vec4& { x *= scalar; y *= scalar; z *= scalar; w *= scalar; return *this; }
   constexpr auto operator/=(T scalar)             -> vec4& { x /= scalar; y /= scalar; z /= scalar; w /= scalar; return *this; }
+  constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y + z * z + w * w); }
+
   friend    auto operator<<(std::ostream& os, const vec4& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ")"; }
 };
 
 struct insets {
   constexpr insets() = default;
-  constexpr insets(int top) : m_val{top, 0, 0, 0} {}
-  constexpr insets(int x, int y) : m_val{y, y, x, x} {}
-  constexpr insets(int top, int bottom, int left) : m_val{top, bottom, left, 0} {}
+
+  constexpr explicit insets(int v) : m_val{v, v, v, v} {}
+  constexpr insets(int vertical, int horizontal) : m_val{vertical, vertical, horizontal, horizontal} {}
   constexpr insets(int top, int bottom, int left, int right) : m_val{top, bottom, left, right} {}
 
-  static constexpr auto all(int val)                -> insets { return insets{val, val, val, val}; }
-  static constexpr auto top(int val)                -> insets { return insets{ val, val }; }
-  static constexpr auto top(int left, int right)    -> insets { return insets{ left, right }; }
-  static constexpr auto bottom(int val)             -> insets { return insets{0, 0, val, val }; }
-  static constexpr auto bottom(int left, int right) -> insets { return insets{ 0, 0, left, right }; }
+  static constexpr auto all(int v) -> insets { return insets{v}; }
+  static constexpr auto vertical(int top, int bottom) -> insets { return insets{top, bottom, 0, 0}; }
+  static constexpr auto horizontal(int left, int right) -> insets { return insets{0, 0, left, right}; }
 
-  auto top()    const -> int { return m_val.x; }
-  auto bottom() const -> int { return m_val.y; }
-  auto left()   const -> int { return m_val.z; }
-  auto right()  const -> int { return m_val.w; }
+  static constexpr auto top(int v) -> insets { return insets{v, 0, 0, 0}; }
+  static constexpr auto bottom(int v) -> insets { return insets{0, v, 0, 0}; }
+  static constexpr auto left(int v) -> insets { return insets{0, 0, v, 0}; }
+  static constexpr auto right(int v) -> insets { return insets{0, 0, 0, v}; }
+
+  auto get_top()        const -> int { return m_val.x; }
+  auto get_bottom()     const -> int { return m_val.y; }
+  auto get_left()       const -> int { return m_val.z; }
+  auto get_right()      const -> int { return m_val.w; }
+  auto get_vertical()   const -> vec2<int> { return { m_val.x, m_val.y }; }
+  auto get_horizontal() const -> vec2<int> { return { m_val.z, m_val.w }; }
+
 private:
-  vec4<int> m_val;
+  vec4<int> m_val{};
 };
 
 struct color {

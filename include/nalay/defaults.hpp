@@ -2,18 +2,6 @@
 
 #include "types.hpp"
 
-//struct style {
-//  std::optional<insets>       padding;
-//  std::optional<insets>       margin;
-//  std::optional<::color>      background_color;
-//  std::optional<::color>      color;
-//  std::optional<::alignment>  alignment;
-//  std::optional<vec2i>        size;
-//  std::optional<insets>       border_radius;
-//  std::optional<int>          font_size;
-//  std::optional<std::reference_wrapper<const font>> display_font;
-//};
-
 namespace defaults {
   static constexpr auto child_spacing        = vec2{16, 16};
   static constexpr auto padding              = 8;
