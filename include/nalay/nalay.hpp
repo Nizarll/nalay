@@ -34,11 +34,6 @@
 
 //TODO: compute text wrap based on parent width
 
-
-//NOTE: figure out how styling of subelements should  work
-//maybe button logic and text logic should be decoupled such that user can control the individual styling of the text
-//inside buttons ???
-
 // Enum Declarations
 
 enum class render_cmd_type: uint8_t {
@@ -49,6 +44,7 @@ enum class render_cmd_type: uint8_t {
 };
 
 enum class alignment : uint8_t {
+  none,
   left,
   right,
   center,
@@ -104,9 +100,9 @@ struct rect {
 
 struct render_cmd {
   std::variant<
-    primitive::text,
-    primitive::img,
-    primitive::rect
+  primitive::text,
+  primitive::img,
+  primitive::rect
   > content;
   vec2i pos;
 };
@@ -136,9 +132,9 @@ struct function_variant {
       ((is_same_signature<std::decay_t<T>, Overloads>::value ? (result = std::min(result, Is), true) : false) || ...);
       return result;
     }(std::index_sequence_for<Overloads...>{});
-    
+
     static_assert(idx < sizeof...(Overloads), "Type is not convertible to any overload");
-    
+
     using TargetType = std::tuple_element_t<idx, std::tuple<Overloads...>>;
     m_index = idx;
     new (m_storage.buffer.data()) TargetType(std::forward<T>(t));
@@ -184,7 +180,7 @@ struct function_variant {
   auto get(this auto&& self) {
     if (self.m_index != index_of<T>()) {
       std::cerr << "function_variant::get mismatch: stored m_index=" << self.m_index 
-                << ", requested m_index=" << index_of<T>() << "\n";
+        << ", requested m_index=" << index_of<T>() << "\n";
       std::abort();
     }
     return *std::launder(reinterpret_cast<T*>(const_cast<std::byte*>(self.m_storage.buffer.data())));
@@ -192,19 +188,19 @@ struct function_variant {
 private:
   template <typename T>
   struct callable_args;
-  
+
   template <typename R, typename... Args>
   struct callable_args<R(Args...)> { using type = std::tuple<Args...>; };
-  
+
   template <typename R, typename... Args>
   struct callable_args<std::function<R(Args...)>> { using type = std::tuple<Args...>; };
-  
+
   template <typename T, typename R, typename... Args>
   struct callable_args<R(T::*)(Args...)> { using type = std::tuple<Args...>; };
-  
+
   template <typename T> requires requires { &T::operator(); }
   struct callable_args<T> : callable_args<decltype(&T::operator())> {};
-  
+
   template <typename T, typename R, typename... Args>
   struct callable_args<R(T::*)(Args...) const> { using type = std::tuple<Args...>; };
   template <typename F1, typename F2>
@@ -386,7 +382,6 @@ struct node {
   auto y_align(this auto&& self, ::alignment alignment) {
     if (alignment == ::alignment::left or alignment == ::alignment::right)
       throw std::invalid_argument("y alignment cannot be left or right");
-    self.m_style.alignment->second = alignment;
     self.m_style.alignment = { self.m_style.alignment.value_or({}).first, alignment  };
     return self;
   }
@@ -434,7 +429,7 @@ struct button : node {
       static_cast<int>(bg_pos.x + (size.x - text_size.x) * 0.5f),
       static_cast<int>(bg_pos.y + (size.y - text_size.y) * 0.5f)
     };
-  
+
     auto bg = queue.emplace(
       primitive::rect{
         .color         = m_style.background_color.value_or(defaults::button_background),
@@ -471,7 +466,7 @@ struct button : node {
     int   fs      = m_style.font_size.value_or(defaults::font_size);
     vec2i text_sz = f.get().measure(text, fs, m_style.letter_spacing.value_or(0));
     auto padding  = m_style.padding.value_or(insets{ defaults::button_padding.x, defaults::button_padding.y });
-    return { text_sz.x + padding.left() + padding.right(), text_sz.y + padding.top() + padding.bottom() };
+    return { text_sz.x + padding.get_left() + padding.get_right(), text_sz.y + padding.get_top() + padding.get_bottom() };
   }
 };
 
@@ -498,7 +493,7 @@ struct layout : node {
   {
     size_t byte_start   = queue.current();
     size_t record_start = queue.records().size();
-    
+
     auto size = measure(ctx);
 
     auto bg = queue.emplace(
@@ -546,49 +541,65 @@ struct layout : node {
 
   void layout_children(render_queue& queue, const layout_ctx& ctx, std::pair<size_t, size_t> range) {
     auto children_size = vec2i{};
-    auto accumulator   = vec2i{};
-    auto size = measure(ctx);
+    auto size          = measure(ctx);
+
     for (auto i = range.first; i < range.second; i++) {
       auto record = queue.records().at(i);
       if (dir_ == direction::vertical) {
         children_size.y += record.computed_size.y + defaults::padding;
-        children_size.x = std::max(children_size.x, record.computed_size.x);
+        children_size.x  = std::max(children_size.x, record.computed_size.x);
       } else {
         children_size.x += record.computed_size.x + defaults::padding;
-        children_size.y = std::max(children_size.y, record.computed_size.y);
+        children_size.y  = std::max(children_size.y, record.computed_size.y);
       }
+    }
+
+    auto layout_alignment = m_style.alignment.value_or({});
+
+    // Compute the main-axis starting offset (justify equivalent) — applied once,
+    // then accumulator advances from there for every child.
+    vec2i accumulator{};
+    if (dir_ == direction::vertical) {
+      if (layout_alignment.second == alignment::bottom)
+        accumulator.y = size.y - children_size.y;
+      else if (layout_alignment.second == alignment::center)
+        accumulator.y = (size.y - children_size.y) / 2;
+    } else {
+      if (layout_alignment.first == alignment::right)
+        accumulator.x = size.x - children_size.x;
+      else if (layout_alignment.first == alignment::center)
+        accumulator.x = (size.x - children_size.x) / 2;
     }
 
     for (auto i = range.first; i < range.second; i++) {
       auto record = queue.records().at(i);
-      queue.for_range(record.start, record.end, [&](render_cmd* cmd) {
-        vec2i alignment_offset{};
-        
-        if (m_style.alignment.value_or({}).first == alignment::right) {
-          alignment_offset.x = size.x - children_size.x;
-        } else if (m_style.alignment.value_or({}).first == alignment::center) {
-          alignment_offset.x = size.x / 2 -  children_size.x;
-        }
-        
-        if (m_style.alignment.value_or({}).second == alignment::bottom) {
-          alignment_offset.y = size.y - children_size.y;
-        } else if (m_style.alignment.value_or({}).second == alignment::center) {
-          alignment_offset.y = size.y / 2 -  children_size.y;
-        }
 
-        cmd->pos += accumulator + alignment_offset;
+      // Cross-axis alignment: per-child, against the layout's full cross-axis extent
+      vec2i cross_offset{};
+      if (dir_ == direction::vertical) {
+        // cross axis = X
+        if (layout_alignment.first == alignment::right)
+          cross_offset.x = size.x - record.computed_size.x;
+        else if (layout_alignment.first == alignment::center)
+          cross_offset.x = (size.x - record.computed_size.x) / 2;
+      } else {
+        // cross axis = Y
+        if (layout_alignment.second == alignment::bottom)
+          cross_offset.y = size.y - record.computed_size.y;
+        else if (layout_alignment.second == alignment::center)
+          cross_offset.y = (size.y - record.computed_size.y) / 2;
+      }
+
+      queue.for_range(record.start, record.end, [&](render_cmd* cmd) {
+        cmd->pos += accumulator + cross_offset;
       });
 
-      if (dir_ == direction::vertical) {
-
+      if (dir_ == direction::vertical)
         accumulator.y += record.computed_size.y + defaults::padding;
-      }
-      else {
+      else
         accumulator.x += record.computed_size.x + defaults::padding;
-      }
     }
   }
-
   auto compute(render_queue& queue, const layout_ctx& ctx) { create(queue, ctx, nullptr); }
 };
 
