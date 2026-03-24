@@ -20,16 +20,13 @@
 #include "providers.hpp"
 #include "defaults.hpp"
 
-//TODO: compute padding based on style's padding instead of defaults::padding on layout class
 //TODO: add layout computation for percentage sizing
 //TODO: add defaults for all base_style members
-//TODO: Fix padding computation issue ==> Padding has to be computed such that there should only be enough padding to not overflow
-//                                        the parent container if it has a fixed size
 //TODO: compute text wrap based on parent width
 
 static thread_local layout_ctx* nalay_ctx = nullptr;
 
-enum class render_cmd_type: uint8_t {
+enum class render_cmd_type : uint8_t {
   img,
   rect,
   text,
@@ -48,54 +45,54 @@ enum class alignment : uint8_t {
 // Struct Declarations
 
 struct style {
-  std::optional<insets> padding;
-  std::optional<insets> margin;
-  std::optional<int> border_size;
-  std::optional<::color> border_color;
-  std::optional<::color> background_color;
-  std::optional<::color> color;
-  std::optional<std::pair<::alignment,::alignment>> alignment;
+  std::optional<insets>                        padding;
+  std::optional<insets>                        margin;
+  std::optional<int>                           border_size;
+  std::optional<::color>                       border_color;
+  std::optional<::color>                       background_color;
+  std::optional<::color>                       color;
+  std::optional<std::pair<::alignment, ::alignment>> alignment;
   std::optional<std::reference_wrapper<const font>> display_font;
-  std::optional<vec2i> size;
-  std::optional<int> border_radius;
-  std::optional<int> letter_spacing;
-  std::optional<int> font_size;
+  std::optional<vec2i>                         size;
+  std::optional<int>                           border_radius;
+  std::optional<int>                           letter_spacing;
+  std::optional<int>                           font_size;
 };
 
 namespace primitive {
 
 struct text {
   std::reference_wrapper<const ::font> font;
-  std::string text;
-  ::color text_color;
-  ::color outline_color;
-  vec2i size;
-  vec2i pos;
-  int outline_thickness;
-  int font_size;
-  int letter_spacing;
+  std::string   text;
+  ::color       text_color;
+  ::color       outline_color;
+  vec2i         size;
+  vec2i         pos;
+  int           outline_thickness;
+  int           font_size;
+  int           letter_spacing;
 };
 
 struct img {
   std::span<char> bytes;
-  int format;
+  int             format;
 };
 
 struct rect {
   ::color color;
   ::color border_color;
-  int border_radius;
-  int border_size;
-  vec2i size;
+  int     border_radius;
+  int     border_size;
+  vec2i   size;
 };
 
 } // namespace primitive
 
 struct render_cmd {
   std::variant<
-  primitive::text,
-  primitive::img,
-  primitive::rect
+    primitive::text,
+    primitive::img,
+    primitive::rect
   > content;
   vec2i pos;
 };
@@ -103,7 +100,7 @@ struct render_cmd {
 struct node_record {
   std::size_t start;
   std::size_t end;
-  vec2i computed_size;
+  vec2i       computed_size;
 };
 
 using renderer      = renderer_<render_cmd>;
@@ -120,7 +117,7 @@ template <typename... Overloads>
 struct function_variant {
   function_variant() = delete;
 
-  template <typename T> requires (!std::same_as<std::decay_t<T>, function_variant>)
+  template <typename T> requires (not std::same_as<std::decay_t<T>, function_variant>)
   function_variant(T&& t) {
     constexpr auto idx = []<std::size_t... Is>(std::index_sequence<Is...>) {
       std::size_t result = sizeof...(Overloads);
@@ -230,7 +227,7 @@ private:
   template <typename T, size_t i = 0>
   static constexpr auto index_of() -> size_t {
     static_assert(index_of_impl<T, i, Overloads...>() < sizeof...(Overloads),
-    "Type is not a valid overload");
+      "Type is not a valid overload");
     return index_of_impl<T, i, Overloads...>();
   }
 };
@@ -240,10 +237,10 @@ private:
 struct render_queue {
   render_queue() { m_records.reserve(1000); }
   ~render_queue() = default;
-  render_queue(const render_queue&)           = delete;
-  render_queue(render_queue&&)                = delete;
-  auto operator=(const render_queue&) -> void = delete;
-  auto operator=(render_queue&&)      -> void = delete;
+  render_queue(const render_queue&)            = delete;
+  render_queue(render_queue&&)                 = delete;
+  auto operator=(const render_queue&) -> void  = delete;
+  auto operator=(render_queue&&)      -> void  = delete;
 
   auto emplace(auto&&... args) -> render_cmd* {
     return m_arena.make(std::forward<decltype(args)>(args)...);
@@ -282,17 +279,17 @@ private:
 namespace ui {
 
 struct node {
-  auto id(this auto&& self, std::string id) { self.m_id = std::move(id); return self; }
-  auto style(this auto&& self, ::style s) { self.m_style = s; return self; }
-  auto padding(this auto&& self, insets p) { self.m_style.padding = p; return self; }
-  auto margin(this auto&& self, insets m) { self.m_style.margin = m; return self; }
-  auto bg_color(this auto&& self, ::color c) { self.m_style.background_color = c; return self; }
-  auto color(this auto&& self, ::color c) { self.m_style.color = c; return self; }
-  auto size(this auto&& self, int w, int h) { self.m_style.size = vec2i{w, h}; return self; }
-  auto border_radius(this auto&& self, int r) { self.m_style.border_radius = r; return self; }
-  auto font_size(this auto&& self, int fs) { self.m_style.font_size = fs; return self; }
+  auto id(this auto&& self, std::string id)                              { self.m_id = std::move(id); return self; }
+  auto style(this auto&& self, ::style s)                                { self.m_style = s; return self; }
+  auto padding(this auto&& self, insets p)                               { self.m_style.padding = p; return self; }
+  auto margin(this auto&& self, insets m)                                { self.m_style.margin = m; return self; }
+  auto bg_color(this auto&& self, ::color c)                             { self.m_style.background_color = c; return self; }
+  auto color(this auto&& self, ::color c)                                { self.m_style.color = c; return self; }
+  auto size(this auto&& self, int w, int h)                              { self.m_style.size = vec2i{w, h}; return self; }
+  auto border_radius(this auto&& self, int r)                            { self.m_style.border_radius = r; return self; }
+  auto font_size(this auto&& self, int fs)                               { self.m_style.font_size = fs; return self; }
   auto display_font(this auto&& self, std::reference_wrapper<const font> f) { self.m_style.display_font = f; return self; }
-  auto align(this auto&& self, std::pair<::alignment,::alignment> a) { self.x_align(a.first); self.y_align(a.second); return self; }
+  auto align(this auto&& self, std::pair<::alignment, ::alignment> a)   { self.x_align(a.first); self.y_align(a.second); return self; }
 
   auto x_align(this auto&& self, ::alignment a) {
     if (a == ::alignment::top || a == ::alignment::bottom)
@@ -307,14 +304,93 @@ struct node {
     return self;
   }
 
-  auto get_bounding_box(this const auto& self) -> vec4i { (void)self; return {}; }
+  auto get_size(this const auto& self) -> vec4i { return self.measure(nalay_ctx); }
   auto get_position(this const auto& self)     -> vec2i { (void)self; return {}; }
 
   virtual ~node() = default;
-  virtual void create(render_queue& queue, const layout_ctx& ctx, node* parent = nullptr) = 0;
-  virtual auto measure(const layout_ctx& ctx) -> vec2i = 0;
+  virtual void create(render_queue& queue, node* parent = nullptr) = 0;
+  virtual auto measure() -> vec2i = 0;
 
 protected:
+
+  auto resolve_font() const -> std::reference_wrapper<const font>
+  {
+    return m_style.display_font.value_or(nalay_ctx->fonts.get().default_font());
+  }
+
+  auto resolve_padding() const -> insets {
+    return m_style.padding.value_or(insets{});
+  }
+
+  auto measure_text_with_padding(const std::string& text) const -> vec2i {
+    const auto text_sz = resolve_font().get().measure(
+      text,
+      m_style.font_size.value_or(defaults::font_size),
+      m_style.letter_spacing.value_or(0)
+    );
+    const auto pad = resolve_padding();
+    return text_sz + vec2i{
+      pad.get_left() + pad.get_right(),
+      pad.get_top()  + pad.get_bottom()
+    };
+  }
+
+  void emit_background(
+    render_queue& queue,
+    vec2i pos,
+    vec2i sz,
+    ::color bg,
+    ::color border_col,
+    int radius,
+    int border_sz) const {
+    queue.emplace(
+      primitive::rect{
+        .color         = bg,
+        .border_color  = border_col,
+        .border_radius = radius,
+        .border_size   = border_sz,
+        .size          = sz,
+      },
+      pos
+    );
+  }
+  void emit_text(
+    render_queue& queue,
+    const std::string& text,
+    vec2i container_pos,
+    vec2i container_sz,
+    vec2i text_sz) const {
+    const auto pad = resolve_padding();
+    // Inner content area after stripping padding.
+    const vec2i inner_pos{
+      container_pos.x + pad.get_left(),
+      container_pos.y + pad.get_top()
+    };
+    const vec2i inner_sz{
+      container_sz.x - pad.get_left() - pad.get_right(),
+      container_sz.y - pad.get_top()  - pad.get_bottom()
+    };
+    const vec2i text_pos{
+      inner_pos.x + (inner_sz.x - text_sz.x) / 2,
+      inner_pos.y + (inner_sz.y - text_sz.y) / 2
+    };
+
+    queue.emplace(
+      primitive::text{
+        .font              = resolve_font(),
+        .text              = text,
+        .text_color        = m_style.color.value_or(color::black()),
+        .outline_color     = m_style.border_color.value_or(color::black()),
+        .size              = text_sz,
+        .pos               = container_pos,
+        .outline_thickness = 0, //TODO:
+        .font_size         = m_style.font_size.value_or(defaults::font_size),
+        .letter_spacing    = m_style.letter_spacing.value_or(0),
+      },
+      text_pos
+    );
+  }
+
   ::style     m_style;
   std::string m_id;
 };
@@ -324,126 +400,94 @@ concept UIElement = std::derived_from<T, node>;
 
 // ─── button ──────────────────────────────────────────────────────────────────
 
-struct button : node {
+struct image : public node {
+
+};
+
+struct button : public node {
   std::string text;
   explicit button(std::string s) : text(std::move(s)) {}
 
-  void create(render_queue& queue, const layout_ctx& ctx, node* parent) override {
+  void create(render_queue& queue, node* parent) override {
     (void)parent;
-    const size_t start     = queue.current();
-    const auto   sz        = measure(ctx);
-    const auto   text_size = m_style.display_font
-      .value_or(ctx.fonts.get().default_font()).get()
-      .measure(text,
-               m_style.font_size.value_or(defaults::font_size),
-               m_style.letter_spacing.value_or(0));
-
-    const vec2i bg_pos{};
-    const vec2i text_pos{
-      static_cast<int>(bg_pos.x + (sz.x - text_size.x) * 0.5f),
-      static_cast<int>(bg_pos.y + (sz.y - text_size.y) * 0.5f)
-    };
-
-    queue.emplace(
-      primitive::rect{
-        .color         = m_style.background_color.value_or(defaults::button_background),
-        .border_color  = m_style.border_color.value_or(defaults::button_border_color),
-        .border_radius = m_style.border_radius.value_or(defaults::button_border_radius),
-        .border_size   = m_style.border_size.value_or(defaults::button_border_size),
-        .size          = sz,
-      },
-      bg_pos
+    const size_t start    = queue.current();
+    const vec2i  sz       = measure();
+    const vec2i  text_sz  = resolve_font().get().measure(
+      text,
+      m_style.font_size.value_or(defaults::font_size),
+      m_style.letter_spacing.value_or(0)
     );
 
-    queue.emplace(
-      primitive::text{
-        .font              = m_style.display_font.value_or(ctx.fonts.get().default_font()),
-        .text              = text,
-        .text_color        = m_style.color.value_or(color::black()),
-        .outline_color     = m_style.border_color.value_or(color::black()),
-        .size              = text_size,
-        .pos               = bg_pos,
-        .outline_thickness = 0,
-        .font_size         = m_style.font_size.value_or(defaults::font_size),
-        .letter_spacing    = m_style.letter_spacing.value_or(0),
-      },
-      text_pos
+    emit_background(
+      queue,
+      {},
+      sz,
+      m_style.background_color.value_or(defaults::button_background),
+      m_style.border_color.value_or(defaults::button_border_color),
+      m_style.border_radius.value_or(defaults::button_border_radius),
+      m_style.border_size.value_or(defaults::button_border_size)
     );
+    emit_text(queue, text, {}, sz, text_sz);
 
     queue.push_record(start, queue.current(), sz);
   }
 
-  auto measure(const layout_ctx& ctx) -> vec2i override {
-    const auto& f    = m_style.display_font.value_or(ctx.fonts.get().default_font());
-    const int   fs   = m_style.font_size.value_or(defaults::font_size);
-    const auto  tsz  = f.get().measure(text, fs, m_style.letter_spacing.value_or(0));
-    const auto  pad  = m_style.padding.value_or(
-      insets{ defaults::button_padding.x, defaults::button_padding.y });
-    return { tsz.x + pad.get_left() + pad.get_right(),
-      tsz.y + pad.get_top()  + pad.get_bottom() };
+  auto measure() -> vec2i override {
+    if (m_style.size.has_value()) return m_style.size.value();
+    const auto pad = m_style.padding.value_or(
+      insets{ defaults::button_padding.x, defaults::button_padding.y }
+    );
+    const auto text_sz = resolve_font().get().measure(
+      text,
+      m_style.font_size.value_or(defaults::font_size),
+      m_style.letter_spacing.value_or(0)
+    );
+    return text_sz + vec2i{
+      pad.get_left() + pad.get_right(),
+      pad.get_top()  + pad.get_bottom()
+    };
   }
 };
 
 // ─── label ───────────────────────────────────────────────────────────────────
 
-struct label : node {
+struct label : public node {
   std::string text;
   explicit label(std::string s) : text(std::move(s)) {}
 
-  void create(render_queue& queue, const layout_ctx& ctx, node* parent) override {
+  void create(render_queue& queue, node* parent) override {
     (void)parent;
-    const size_t start     = queue.current();
-    const auto   sz        = measure(ctx);
-    const auto   text_size = m_style.display_font
-      .value_or(ctx.fonts.get().default_font()).get()
-      .measure(text,
-               m_style.font_size.value_or(defaults::font_size),
-               m_style.letter_spacing.value_or(0));
-
-    queue.emplace(
-      primitive::rect{
-        .color         = m_style.background_color.value_or({}),
-        .border_color  = m_style.border_color.value_or({}),
-        .border_radius = m_style.border_radius.value_or(0),
-        .border_size   = m_style.border_size.value_or(0),
-        .size          = sz,
-      },
-      vec2i{}
+    const size_t start   = queue.current();
+    const vec2i  sz      = measure();
+    const vec2i  text_sz = resolve_font().get().measure(
+      text,
+      m_style.font_size.value_or(defaults::font_size),
+      m_style.letter_spacing.value_or(0)
     );
 
-    queue.emplace(
-      primitive::text{
-        .font              = m_style.display_font.value_or(ctx.fonts.get().default_font()),
-        .text              = text,
-        .text_color        = m_style.color.value_or(color::black()),
-        .outline_color     = m_style.border_color.value_or(color::black()),
-        .size              = text_size,
-        .pos               = vec2i{},
-        .outline_thickness = 0,
-        .font_size         = m_style.font_size.value_or(defaults::font_size),
-        .letter_spacing    = m_style.letter_spacing.value_or(0),
-      },
-      vec2i{}
+    emit_background(
+      queue,
+      {},
+      sz,
+      m_style.background_color.value_or({}),
+      m_style.border_color.value_or({}),
+      m_style.border_radius.value_or(0),
+      m_style.border_size.value_or(0)
     );
+    emit_text(queue, text, {}, sz, text_sz);
 
     queue.push_record(start, queue.current(), sz);
   }
 
-  auto measure(const layout_ctx& ctx) -> vec2i override {
-    const auto& f = m_style.display_font.value_or(ctx.fonts.get().default_font());
-    auto padding  = m_style.padding.value_or({});
-    return f.get().measure(
-      text,
-      m_style.font_size.value_or(defaults::font_size),
-      m_style.letter_spacing.value_or(0)
-    ) + vec2i{ padding.get_left() + padding.get_right(), padding.get_top() + padding.get_bottom() };
-    ;
+  auto measure() -> vec2i override {
+    if (m_style.size.has_value()) return m_style.size.value();
+    return measure_text_with_padding(text);
   }
 };
 
 // ─── layout ──────────────────────────────────────────────────────────────────
 
-struct layout : node {
+struct layout : public node {
   enum class direction { vertical, horizontal };
 
   using child_list = std::vector<node*, slab_allocator<node*>>;
@@ -453,7 +497,8 @@ struct layout : node {
     , components(slab_allocator<node*>{ nalay_ctx->node_allocator }) {}
 
   explicit layout(direction dir, auto&&... children)
-  : dir_(dir),components(slab_allocator<node*>{ nalay_ctx->node_allocator })
+    : dir_(dir)
+    , components(slab_allocator<node*>{ nalay_ctx->node_allocator })
   {
     (components.push_back(
       nalay_ctx->make_node<std::decay_t<decltype(children)>>(std::forward<decltype(children)>(children))
@@ -462,38 +507,48 @@ struct layout : node {
 
   void add(node& child) { components.push_back(&child); }
 
-  void create(render_queue& queue, const layout_ctx& ctx, node* parent) override {
+  template <UIElement T> requires (not std::is_reference_v<T>)
+  void add(T&& child) {
+    components.push_back(
+      nalay_ctx->make_node<T>(std::forward<T>(child))
+    );
+  }
+
+  void create(render_queue& queue, node* parent) override {
     (void)parent;
     const size_t byte_start   = queue.current();
     const size_t record_start = queue.records().size();
-    const auto   sz           = measure(ctx);
+    const vec2i  sz           = measure();
+    const auto   pad          = resolve_padding();
+    const vec2i  padded_sz {
+      sz.x + pad.get_left() + pad.get_right(),
+      sz.y + pad.get_top()  + pad.get_bottom()
+    };
 
-    queue.emplace(
-      primitive::rect{
-        .color         = m_style.background_color.value_or({}),
-        .border_color  = m_style.border_color.value_or({}),
-        .border_radius = m_style.border_radius.value_or(0),
-        .border_size   = m_style.border_size.value_or(0),
-        .size          = sz,
-      },
-      vec2i{}
+    emit_background(
+      queue,
+      {},
+      padded_sz,
+      m_style.background_color.value_or({}),
+      m_style.border_color.value_or({}),
+      m_style.border_radius.value_or(0),
+      m_style.border_size.value_or(0)
     );
 
     for (node* child : components)
-    child->create(queue, ctx, this);
+      child->create(queue, this);
 
-    layout_children(queue, ctx, { record_start, queue.records().size() });
+    layout_children(queue, sz, pad, { record_start, queue.records().size() });
 
     queue.trim_records(record_start);
-    queue.push_record(byte_start, queue.current(), sz);
+    queue.push_record(byte_start, queue.current(), padded_sz);
   }
 
-  auto measure(const layout_ctx& ctx) -> vec2i override {
+  auto measure() -> vec2i override {
     if (m_style.size.has_value()) return m_style.size.value();
-
     vec2i sz{};
     for (node* child : components) {
-      const vec2i child_sz = child->measure(ctx);
+      const vec2i child_sz = child->measure();
       if (dir_ == direction::vertical) {
         sz.x  = std::max(sz.x, child_sz.x);
         sz.y += child_sz.y + defaults::padding;
@@ -505,16 +560,18 @@ struct layout : node {
     return sz;
   }
 
-  void compute(render_queue& queue, const layout_ctx& ctx) {
-    create(queue, ctx, nullptr);
+  void compute(render_queue& queue) {
+    create(queue, nullptr);
   }
 
 private:
-  void layout_children(render_queue& queue, const layout_ctx& ctx, std::pair<size_t, size_t> range)
-  {
+  void layout_children(
+    render_queue& queue,
+    vec2i sz,
+    const insets& pad,
+    std::pair<size_t, size_t> range) {
+    // Accumulate total children extent along the main axis.
     vec2i children_size{};
-    const auto sz = measure(ctx);
-
     for (auto i = range.first; i < range.second; ++i) {
       const auto& rec = queue.records().at(i);
       if (dir_ == direction::vertical) {
@@ -528,37 +585,34 @@ private:
 
     const auto layout_alignment = m_style.alignment.value_or({});
 
+    // Starting offset along the main axis (honours alignment).
     vec2i accumulator{};
     if (dir_ == direction::vertical) {
-      if      (layout_alignment.second == alignment::bottom)
-        accumulator.y = sz.y - children_size.y;
-      else if (layout_alignment.second == alignment::center)
-        accumulator.y = (sz.y - children_size.y) / 2;
+      if      (layout_alignment.second == alignment::bottom) accumulator.y = sz.y - children_size.y;
+      else if (layout_alignment.second == alignment::center) accumulator.y = (sz.y - children_size.y) / 2;
     } else {
-      if      (layout_alignment.first == alignment::right)
-        accumulator.x = sz.x - children_size.x;
-      else if (layout_alignment.first == alignment::center)
-        accumulator.x = (sz.x - children_size.x) / 2;
+      if      (layout_alignment.first == alignment::right)  accumulator.x = sz.x - children_size.x;
+      else if (layout_alignment.first == alignment::center) accumulator.x = (sz.x - children_size.x) / 2;
     }
+
+    // Padding origin: top-left corner of the content area.
+    const vec2i pad_origin{ pad.get_left(), pad.get_top() };
 
     for (auto i = range.first; i < range.second; ++i) {
       const auto& rec = queue.records().at(i);
 
+      // Cross-axis offset (centres or aligns perpendicular to flow direction).
       vec2i cross_offset{};
       if (dir_ == direction::vertical) {
-        if (layout_alignment.first == alignment::right)
-          cross_offset.x = sz.x - rec.computed_size.x;
-        else if(layout_alignment.first == alignment::center)
-          cross_offset.x = (sz.x - rec.computed_size.x) / 2;
+        if      (layout_alignment.first == alignment::right)  cross_offset.x = sz.x - rec.computed_size.x;
+        else if (layout_alignment.first == alignment::center) cross_offset.x = (sz.x - rec.computed_size.x) / 2;
       } else {
-        if (layout_alignment.second == alignment::bottom)
-          cross_offset.y = sz.y - rec.computed_size.y;
-        else if (layout_alignment.second == alignment::center)
-          cross_offset.y = (sz.y - rec.computed_size.y) / 2;
+        if      (layout_alignment.second == alignment::bottom) cross_offset.y = sz.y - rec.computed_size.y;
+        else if (layout_alignment.second == alignment::center) cross_offset.y = (sz.y - rec.computed_size.y) / 2;
       }
 
       queue.for_range(rec.start, rec.end, [&](render_cmd* cmd) {
-        cmd->pos += accumulator + cross_offset;
+        cmd->pos += pad_origin + accumulator + cross_offset;
       });
 
       if (dir_ == direction::vertical)
@@ -575,15 +629,15 @@ private:
 // ─── columns / rows ──────────────────────────────────────────────────────────
 
 template <UIElement... Elements>
-struct columns final : layout {
+struct columns final : public layout {
   columns(Elements&&... args)
-  : layout(direction::horizontal, args...) {}
+    : layout(direction::horizontal, args...) {}
 };
 
 template <UIElement... Elements>
-struct rows final : layout {
+struct rows final : public layout {
   rows(Elements&&... args)
-  : layout(direction::vertical, args...) {}
+    : layout(direction::vertical, args...) {}
 };
 
 } // namespace ui

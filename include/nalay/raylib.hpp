@@ -100,7 +100,7 @@ private:
         static_cast<float>(content.size.x),
         static_cast<float>(content.size.y)
       },
-      content.border_radius,//TODO: implement a DrawRectangleRounded function 
+      content.border_radius * 0.01,//TODO: implement a DrawRectangleRounded function 
       20,
       Color{
         static_cast<unsigned char>(content.color.get_r()),
@@ -117,7 +117,7 @@ private:
           static_cast<float>(content.size.x),
           static_cast<float>(content.size.y)
         },
-        content.border_radius,//TODO: implement a DrawRectangleRounded function 
+        content.border_radius * 0.01,//TODO: implement a DrawRectangleRounded function 
         20,
         content.border_size > 0 ? (content.border_size + 0.1f) : 0.0f,
         Color{
@@ -131,7 +131,7 @@ private:
   
   void render_img (const render_cmd& cmd)
   {
-
+    //TODO:
   }
 
   void render_text(const render_cmd& cmd)
