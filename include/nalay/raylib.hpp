@@ -8,10 +8,10 @@
 #include <raylib.h>
 #include <rlgl.h>
 
-#include "nalay.hpp"
-#include "nalay/defaults.hpp"
+#include "nalay/nalay.hpp"
+#include "nalay/providers.hpp"
 
-struct raylib_font : public font {
+struct raylib_font : public nalay::font {
   explicit raylib_font(std::string_view path) {
     m_font = LoadFont(path.data());
     if (m_font.texture.id == 0)
@@ -26,15 +26,15 @@ struct raylib_font : public font {
     UnloadFont(m_font);
   }
 
-  auto measure(const std::string& text, int font_size, int spacing) const -> vec2i override {
+  auto measure(const std::string& text, int font_size, int spacing) const -> nalay::vec2i override {
     const Vector2 size  = MeasureTextEx(m_font, text.c_str(),
                                         static_cast<float>(font_size), static_cast<float>(spacing));
     return { static_cast<int>(size.x), static_cast<int>(size.y) };
   }
 
-  auto get_metrics() const -> font_metrics override {
+  auto get_metrics() const -> nalay::font_metrics override {
     const float base = static_cast<float>(m_font.baseSize);
-    return font_metrics{
+    return nalay::font_metrics{
       .ascent   =  base * 0.8f,// ~80 % of em above baseline
       .descent  = -base * 0.2f,// ~20 % below baseline (negative convention)
       .line_gap =  base * 0.1f,
@@ -46,7 +46,8 @@ private:
   Font m_font{};
 };
 
-struct raylib_font_provider : public font_provider {
+
+struct raylib_font_provider : public nalay::font_provider {
 
   raylib_font_provider() { fonts_.emplace("default", std::make_unique<raylib_font>(GetFontDefault())); }
   ~raylib_font_provider() = default;
@@ -56,43 +57,43 @@ struct raylib_font_provider : public font_provider {
     if (!inserted) throw std::runtime_error(std::string("raylib_font_provider: '") + name.data() + "' is already loaded");
   }
 
-  auto get(std::string_view name) const -> const font& override {
+  auto get(std::string_view name) const -> const nalay::font& override {
     const auto it = fonts_.find(std::string(name));
     if (it == fonts_.end()) throw std::runtime_error(std::string("raylib_font_provider: '") + name.data() + "' not found");
     return *it->second;
   }
 
-  auto default_font() const -> const font& override { return get("default"); }
+  auto default_font() const -> const nalay::font& override { return get("default"); }
 
 private:
   std::unordered_map<std::string, std::unique_ptr<raylib_font>> fonts_;
 };
 
-struct raylib_renderer: public renderer {
+struct raylib_renderer: public nalay::renderer {
 
   raylib_renderer() = default;
 
-  void render(render_queue& queue)
+  void render(nalay::render_queue& queue)
   {
-    queue.for_each([this](const render_cmd& cmd){ render(cmd); });
+    queue.for_each([this](const nalay::render_cmd& cmd){ render(cmd); });
   }
 
-  void render(const render_cmd& cmd) override {
+  void render(const nalay::render_cmd& cmd) override {
     std::visit([this, cmd](auto&& arg) {
       using T = std::decay_t<decltype(arg)>;
-      if constexpr(std::same_as<T, primitive::rect>)
+      if constexpr(std::same_as<T, nalay::primitive::rect>)
         render_rect(cmd);
-      else if(std::same_as<T, primitive::img>)
+      else if(std::same_as<T, nalay::primitive::img>)
         render_img(cmd);
-      else if(std::same_as<T, primitive::text>)
+      else if(std::same_as<T, nalay::primitive::text>)
         render_text(cmd);
     },
                cmd.content);
   }
 private:
-  void render_rect(const render_cmd& cmd)
+  void render_rect(const nalay::render_cmd& cmd)
   {
-    auto content = std::get<primitive::rect>(cmd.content);
+    auto content = std::get<nalay::primitive::rect>(cmd.content);
     DrawRectangleRounded(
       {
         static_cast<float>(cmd.pos.x),
@@ -128,18 +129,18 @@ private:
         }
       );
   }
-  
-  void render_img (const render_cmd& cmd)
+
+  void render_img (const nalay::render_cmd& cmd)
   {
     //TODO:
   }
 
-  void render_text(const render_cmd& cmd)
+  void render_text(const nalay::render_cmd& cmd)
   {
-    auto content = std::get<primitive::text>(cmd.content);
+    auto content = std::get<nalay::primitive::text>(cmd.content);
     DrawTextEx(
       dynamic_cast<const raylib_font*>(&content.font.get())->raw(),
-      std::get<primitive::text>(cmd.content).text.data(),
+      std::get<nalay::primitive::text>(cmd.content).text.data(),
       Vector2{
         static_cast<float>(cmd.pos.x),
         static_cast<float>(cmd.pos.y)
@@ -156,3 +157,73 @@ private:
   }
 };
 
+struct raylib_input_provider : public nalay::input_provider {
+  void poll() override {
+    m_events.clear();
+
+    for (auto [nb, rb] : {
+      std::pair{nalay::mouse_button::left,   MOUSE_BUTTON_LEFT},
+      std::pair{nalay::mouse_button::right,  MOUSE_BUTTON_RIGHT},
+      std::pair{nalay::mouse_button::middle, MOUSE_BUTTON_MIDDLE}
+    }) {
+      if (IsMouseButtonPressed(rb)) {
+        m_events.emplace_back(nalay::mouse_event{
+          .pos    = mouse_pos(),
+          .delta  = mouse_delta(),
+          .button = nb,
+          .action = nalay::key_action::press
+        });
+      } else if (IsMouseButtonReleased(rb)) {
+        m_events.emplace_back(nalay::mouse_event{
+          .pos    = mouse_pos(),
+          .delta  = mouse_delta(),
+          .button = nb,
+          .action = nalay::key_action::release
+        });
+      }
+    }
+
+    int key = 0;
+    while ((key = GetKeyPressed()) != 0) {
+      m_events.emplace_back(nalay::keyboard_event{
+        .codepoint = static_cast<char32_t>(GetCharPressed()),
+        .key = static_cast<char>(key),
+        .action = nalay::key_action::press,
+    });
+    }
+  }
+
+  auto mouse_pos()   const -> nalay::vec2i override {
+    auto pos = GetMousePosition();
+    return { static_cast<int>(pos.x), static_cast<int>(pos.y) };
+  }
+
+  auto mouse_delta() const -> nalay::vec2i override {
+    auto delta = GetMouseDelta();
+    return { static_cast<int>(delta.x), static_cast<int>(delta.y) };
+  }
+
+  auto mouse_pressed (nalay::mouse_button b) const -> bool override { return IsMouseButtonPressed (to_rl(b)); }
+  auto mouse_released(nalay::mouse_button b) const -> bool override { return IsMouseButtonReleased(to_rl(b)); }
+  auto mouse_down    (nalay::mouse_button b) const -> bool override { return IsMouseButtonDown    (to_rl(b)); }
+
+  auto key_pressed (int k) const -> bool override { return IsKeyPressed(k);  }
+  auto key_released(int k) const -> bool override { return IsKeyReleased(k); }
+  auto key_down    (int k) const -> bool override { return IsKeyDown(k);     }
+
+  auto events() const -> std::span<const std::variant<nalay::keyboard_event, nalay::mouse_event>> override
+  {
+    return m_events;
+  }
+
+private:
+  static int to_rl(nalay::mouse_button btn) {
+    switch (btn) {
+      case nalay::mouse_button::left:   return MOUSE_BUTTON_LEFT;
+      case nalay::mouse_button::right:  return MOUSE_BUTTON_RIGHT;
+      case nalay::mouse_button::middle: return MOUSE_BUTTON_MIDDLE;
+    }
+  }
+
+  std::vector<std::variant<nalay::keyboard_event, nalay::mouse_event>> m_events;
+};

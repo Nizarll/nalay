@@ -8,6 +8,8 @@
 #include <new>
 #include <type_traits>
 
+namespace nalay {
+
 template <typename T>
 struct arena
 {
@@ -157,3 +159,5 @@ private:
 
   std::shared_ptr<pool_t> m_pool;
 };
+
+} // nalay

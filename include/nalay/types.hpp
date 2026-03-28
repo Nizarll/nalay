@@ -1,8 +1,127 @@
 #pragma once
 
 #include <cmath>
+#include <stdexcept>
 #include <type_traits>
 #include <ostream>
+#include <functional>
+
+namespace nalay {
+  
+template <typename T> struct callable_args;
+template <typename R, typename... Args>
+struct callable_args<R(Args...)> { using type = std::tuple<Args...>; };
+template <typename R, typename... Args>
+struct callable_args<std::function<R(Args...)>> { using type = std::tuple<Args...>; };
+template <typename T, typename R, typename... Args>
+struct callable_args<R(T::*)(Args...)> { using type = std::tuple<Args...>; };
+template <typename T> requires requires { &T::operator(); }
+struct callable_args<T> : callable_args<decltype(&T::operator())> {};
+template <typename T, typename R, typename... Args>
+struct callable_args<R(T::*)(Args...) const> { using type = std::tuple<Args...>; };
+
+template <typename F1, typename F2>
+struct is_same_signature {
+  using t1 = typename callable_args<F1>::type;
+  using t2 = typename callable_args<F2>::type;
+  static constexpr auto value = std::same_as<t1, t2>;
+};
+
+
+template <typename... Overloads>
+struct function_variant {
+  function_variant() = delete;
+
+  template <typename T> requires (not std::same_as<std::decay_t<T>, function_variant>)
+  function_variant(T&& t) {
+    constexpr auto idx = []<std::size_t... Is>(std::index_sequence<Is...>) {
+      std::size_t result = sizeof...(Overloads);
+      ((is_same_signature<std::decay_t<T>, Overloads>::value
+        ? (result = std::min(result, Is), true) : false) || ...);
+      return result;
+    }(std::index_sequence_for<Overloads...>{});
+
+    static_assert(idx < sizeof...(Overloads), "Type is not convertible to any overload");
+    using TargetType = std::tuple_element_t<idx, std::tuple<Overloads...>>;
+    m_index = idx;
+    new (m_storage.buffer.data()) TargetType(std::forward<T>(t));
+  }
+
+  function_variant(const function_variant& other) : m_index(other.m_index) { copy_from(other); }
+  function_variant(function_variant&& other) noexcept : m_index(other.m_index) { move_from(other); }
+
+  auto operator=(const function_variant& other) -> function_variant& {
+    if (this != &other) { this->~function_variant(); m_index = other.m_index; copy_from(other); }
+    return *this;
+  }
+  auto operator=(function_variant&& other) noexcept -> function_variant& {
+    if (this != &other) { this->~function_variant(); m_index = other.m_index; move_from(other); }
+    return *this;
+  }
+
+  ~function_variant() {
+    [this]<std::size_t... Is>(std::index_sequence<Is...>) {
+      auto destroy = [this]<std::size_t I>() {
+        if (m_index == I) {
+          using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
+          std::launder(reinterpret_cast<T*>(m_storage.buffer.data()))->~T();
+        }
+      };
+      (destroy.template operator()<Is>(), ...);
+    }(std::index_sequence_for<Overloads...>{});
+  }
+
+  auto which() const -> size_t { return m_index; }
+
+  template <typename T>
+  auto get(this auto&& self) {
+    if (self.m_index != index_of<T>()) throw std::out_of_range("function_variant::get mismatch");
+    return *std::launder(reinterpret_cast<T*>(self.m_storage.buffer.data()));
+  }
+
+private:
+  template <std::size_t I = 0>
+  void copy_from(const function_variant& other) {
+    if constexpr (I < sizeof...(Overloads)) {
+      if (other.m_index == I) {
+        using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
+        new (m_storage.buffer.data()) T(
+          *std::launder(reinterpret_cast<const T*>(other.m_storage.buffer.data())));
+      } else { copy_from<I + 1>(other); }
+    }
+  }
+
+  template <std::size_t I = 0>
+  void move_from(function_variant& other) {
+    if constexpr (I < sizeof...(Overloads)) {
+      if (other.m_index == I) {
+        using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
+        new (m_storage.buffer.data()) T(
+          std::move(*std::launder(reinterpret_cast<T*>(other.m_storage.buffer.data()))));
+      } else { move_from<I + 1>(other); }
+    }
+  }
+
+  template <typename T, size_t i, typename First, typename... Rest>
+  static constexpr auto index_of_impl() -> size_t {
+    if constexpr (std::same_as<T, First>) return i;
+    else return index_of_impl<T, i + 1, Rest...>();
+  }
+  template <typename T, size_t i>
+  static constexpr auto index_of_impl() -> size_t { return sizeof...(Overloads); }
+  template <typename T, size_t i = 0>
+  static constexpr auto index_of() -> size_t {
+    static_assert(index_of_impl<T, i, Overloads...>() < sizeof...(Overloads),
+      "Type is not a valid overload");
+    return index_of_impl<T, i, Overloads...>();
+  }
+
+  static constexpr std::size_t size      = std::max({sizeof(Overloads)...});
+  static constexpr std::size_t alignment = std::max({alignof(Overloads)...});
+  struct alignas(alignment) internal_storage { std::array<std::byte, size> buffer; };
+  internal_storage m_storage;
+  size_t           m_index;
+};
 
 template<typename T>
 concept Number = std::is_arithmetic_v<T>;
@@ -167,4 +286,4 @@ using vec2f = vec2<float>;
 using vec2d = vec2<double>;
 using vec2i = vec2<int>;
 
-
+} // namespace nalay

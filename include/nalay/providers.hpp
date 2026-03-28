@@ -1,17 +1,33 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <string_view>
+#include <variant>
 #include "types.hpp"
 #include "allocators.hpp"
+
+namespace nalay {
 
 enum class image_format {
   rgba8,
   rgb8,
   alpha8
 };
+
+enum class mouse_button : uint8_t { left, right, middle };
+enum class key_action   : uint8_t { press, release, repeat };
+
+struct mouse_event {
+  vec2i pos;
+  vec2i delta;
+  mouse_button button;
+  key_action action;
+};
+
+struct keyboard_event {
+  char32_t codepoint;
+  char key;
+  key_action action;
+};
+
 
 struct font_metrics {
   float ascent;
@@ -20,9 +36,8 @@ struct font_metrics {
 };
 
 struct image_info {
-  uint32_t width;
-  uint32_t height;
   image_format format;
+  vec2i size;
   uint32_t mipmaps;
 };
 
@@ -70,21 +85,46 @@ struct image_provider {
   void operator=(const image_provider&) = delete;
   void operator=(image_provider&&)      = delete;
 
-  virtual void load(std::string_view name, std::string_view path) = 0;
-  virtual auto size_of(std::string_view name)      const -> vec2i = 0;
+  virtual auto load(std::string_view path) -> const font& = 0;
+};
+
+struct input_provider {
+  input_provider()                       = default;
+  virtual ~input_provider()              = default;
+  input_provider(const input_provider&)  = delete;
+  input_provider(input_provider&&)       = delete;
+  void operator=(const input_provider&)  = delete;
+  void operator=(input_provider&&)       = delete;
+
+  virtual void poll() = 0;
+
+  virtual auto mouse_pos()                  const -> vec2i = 0;
+  virtual auto mouse_delta()                const -> vec2i = 0;
+  virtual auto mouse_pressed(mouse_button)  const -> bool  = 0;
+  virtual auto mouse_released(mouse_button) const -> bool  = 0;
+  virtual auto mouse_down(mouse_button) const     -> bool  = 0;
+
+  virtual auto key_pressed(int keycode)  const -> bool = 0;
+  virtual auto key_released(int keycode) const -> bool = 0;
+  virtual auto key_down(int keycode)     const -> bool = 0;
+
+  virtual auto events() const -> std::span<const std::variant<keyboard_event, mouse_event>> = 0;
 };
 
 namespace ui { struct node; } // hacky fix
 
-struct layout_ctx {
-  slab_allocator<ui::node*> node_allocator; // Storage is shared via shared_ptr
-  std::reference_wrapper<font_provider> fonts;
+struct context {
 
-  template <typename T, typename... Args> 
-  requires std::derived_from<T, ui::node>
+  std::reference_wrapper<font_provider>  fonts;
+  std::reference_wrapper<input_provider> inputs;
+  slab_allocator<ui::node*> node_allocator; // Storage is shared via shared_ptr
+
+  ui::node* focused_node = nullptr;  // at most one node owns focus at a time
+  
+  template <typename T, typename... Args> requires std::derived_from<T, ui::node>
   auto make_node(Args&&... args) -> T* {
     T* ptr = node_allocator.allocate_as<T>(1);
-    if (!ptr) throw std::bad_alloc();
+    if (not ptr) throw std::bad_alloc();
     return std::construct_at(ptr, std::forward<Args>(args)...);
   }
 };
@@ -100,3 +140,4 @@ struct renderer_ {
   virtual void render(const T& data) = 0;
 };
 
+} // namespace nalay
