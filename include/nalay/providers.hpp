@@ -15,6 +15,113 @@ enum class image_format {
 enum class mouse_button : uint8_t { left, right, middle };
 enum class key_action   : uint8_t { press, release, repeat };
 
+enum class key : uint16_t {
+  null = 0,
+  space         = ' ',
+  apostrophe    = '\'',
+  comma         = ',',
+  minus         = '-',
+  period        = '.',
+  slash         = '/',
+  zero          = '0',
+  one           = '1',
+  two           = '2',
+  three         = '3',
+  four          = '4',
+  five          = '5',
+  six           = '6',
+  seven         = '7',
+  eight         = '8',
+  nine          = '9',
+  semicolon     = ';',
+  equal         = '=',
+  a             = 'a',
+  b             = 'b',
+  c             = 'c',
+  d             = 'd',
+  e             = 'e',
+  f             = 'f',
+  g             = 'g',
+  h             = 'h',
+  i             = 'i',
+  j             = 'j',
+  k             = 'k',
+  l             = 'l',
+  m             = 'm',
+  n             = 'n',
+  o             = 'o',
+  p             = 'p',
+  q             = 'q',
+  r             = 'r',
+  s             = 's',
+  t             = 't',
+  u             = 'u',
+  v             = 'v',
+  w             = 'w',
+  x             = 'x',
+  y             = 'y',
+  z             = 'z',
+  uppercase_a   = 'A',
+  uppercase_b   = 'B',
+  uppercase_c   = 'C',
+  uppercase_d   = 'D',
+  uppercase_e   = 'E',
+  uppercase_f   = 'F',
+  uppercase_g   = 'G',
+  uppercase_h   = 'H',
+  uppercase_i   = 'I',
+  uppercase_j   = 'J',
+  uppercase_k   = 'K',
+  uppercase_l   = 'L',
+  uppercase_m   = 'M',
+  uppercase_n   = 'N',
+  uppercase_o   = 'O',
+  uppercase_p   = 'P',
+  uppercase_q   = 'Q',
+  uppercase_r   = 'R',
+  uppercase_s   = 'S',
+  uppercase_t   = 'T',
+  uppercase_u   = 'U',
+  uppercase_v   = 'V',
+  uppercase_w   = 'W',
+  uppercase_x   = 'X',
+  uppercase_y   = 'Y',
+  uppercase_z   = 'Z',
+  left_bracket  = '[',
+  backslash     = '\\',
+  right_bracket = ']',
+  grave         = '`',
+  escape        = 256,
+  enter,
+  tab,
+  backspace,
+  insert,
+  del,
+  right,
+  left,
+  down,
+  up,
+  page_up,
+  page_down,
+  home,
+  end,
+  caps_lock,
+  scroll_lock,
+  num_lock,
+  print_screen,
+  pause,
+  f1, f2, f3, f4, f5,  f6,
+  f7, f8, f9, f10, f11, f12,
+  left_shift,
+  left_control,
+  left_alt,
+  left_super,
+  right_shift,
+  right_control,
+  right_alt,
+  right_super,
+};
+
 struct mouse_event {
   vec2i pos;
   vec2i delta;
@@ -24,7 +131,7 @@ struct mouse_event {
 
 struct keyboard_event {
   char32_t codepoint;
-  char key;
+  nalay::key key;
   key_action action;
 };
 
@@ -104,9 +211,9 @@ struct input_provider {
   virtual auto mouse_released(mouse_button) const -> bool  = 0;
   virtual auto mouse_down(mouse_button) const     -> bool  = 0;
 
-  virtual auto key_pressed(int keycode)  const -> bool = 0;
-  virtual auto key_released(int keycode) const -> bool = 0;
-  virtual auto key_down(int keycode)     const -> bool = 0;
+  virtual auto key_pressed(nalay::key key)  const -> bool = 0;
+  virtual auto key_released(nalay::key key) const -> bool = 0;
+  virtual auto key_down(nalay::key key)     const -> bool = 0;
 
   virtual auto events() const -> std::span<const std::variant<keyboard_event, mouse_event>> = 0;
 };
@@ -117,10 +224,11 @@ struct context {
 
   std::reference_wrapper<font_provider>  fonts;
   std::reference_wrapper<input_provider> inputs;
-  slab_allocator<ui::node*> node_allocator; // Storage is shared via shared_ptr
-
-  ui::node* focused_node = nullptr;  // at most one node owns focus at a time
+  slab_allocator<ui::node*> node_allocator;
   
+  ui::node* focused_node = nullptr;
+  float delta_time = .0f;
+
   template <typename T, typename... Args> requires std::derived_from<T, ui::node>
   auto make_node(Args&&... args) -> T* {
     T* ptr = node_allocator.allocate_as<T>(1);

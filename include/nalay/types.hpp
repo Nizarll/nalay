@@ -9,6 +9,7 @@
 namespace nalay {
   
 template <typename T> struct callable_args;
+
 template <typename R, typename... Args>
 struct callable_args<R(Args...)> { using type = std::tuple<Args...>; };
 template <typename R, typename... Args>
@@ -201,7 +202,9 @@ struct insets {
 
   static constexpr auto all(int v) -> insets { return insets{v}; }
   static constexpr auto vertical(int top, int bottom) -> insets { return insets{top, bottom, 0, 0}; }
+  static constexpr auto vertical(int value) -> insets { return insets{value, value, 0, 0}; }
   static constexpr auto horizontal(int left, int right) -> insets { return insets{0, 0, left, right}; }
+  static constexpr auto horizontal(int value) -> insets { return insets{0, 0, value, value }; }
 
   static constexpr auto top(int v) -> insets { return insets{v, 0, 0, 0}; }
   static constexpr auto bottom(int v) -> insets { return insets{0, v, 0, 0}; }

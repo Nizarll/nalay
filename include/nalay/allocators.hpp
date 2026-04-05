@@ -134,7 +134,7 @@ struct slab_allocator
     m_pool->emplace_back();
     return current_slab().template allocate_bytes<U>(n);
   }
-  void deallocate(T* ptr, std::size_t size) noexcept { }
+  [[maybe_unused]] void deallocate(T* /*ptr*/, std::size_t /*size*/) noexcept { }
 
   template <typename U>
   auto operator==(const slab_allocator<U>& rhs) const noexcept -> bool { return m_pool.get() == rhs.m_pool_ptr().get(); }

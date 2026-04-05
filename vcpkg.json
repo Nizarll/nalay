@@ -6,7 +6,8 @@
     {
       "name": "fmt",
       "version>=": "11.0.2#1"
-    }
+    },
+    "abseil"
   ],
   "features": {
     "test": {
