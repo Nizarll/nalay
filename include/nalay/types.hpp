@@ -18,8 +18,6 @@ template <typename T, typename R, typename... Args>
 struct callable_args<R(T::*)(Args...)> { using type = std::tuple<Args...>; };
 template <typename T> requires requires { &T::operator(); }
 struct callable_args<T> : callable_args<decltype(&T::operator())> {};
-template <typename T, typename R, typename... Args>
-struct callable_args<R(T::*)(Args...) const> { using type = std::tuple<Args...>; };
 
 template <typename F1, typename F2>
 struct is_same_signature {
