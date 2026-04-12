@@ -191,6 +191,16 @@ struct vec4 {
   friend    auto operator<<(std::ostream& os, const vec4& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ")"; }
 };
 
+struct unit {
+  enum class kind { fixed, percent, fill };
+  int  value;
+  kind type;
+
+  static constexpr auto px(int v)  -> unit { return {v, kind::fixed};   }
+  static constexpr auto pct(int v) -> unit { return {v, kind::percent}; }
+  static constexpr auto fill()     -> unit { return {0, kind::fill};    }
+};
+
 struct insets {
   constexpr insets() = default;
 

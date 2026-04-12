@@ -92,7 +92,8 @@ struct style {
   std::optional<std::pair<nalay::alignment, nalay::alignment>> alignment;
   std::optional<nalay::text_alignment> text_alignment;
   std::optional<std::reference_wrapper<const nalay::font>> display_font;
-  std::optional<vec2i> size;
+  std::optional<unit> width;
+  std::optional<unit> height;
   std::optional<int> border_radius;
   std::optional<int> letter_spacing;
   std::optional<int> font_size;
@@ -112,7 +113,8 @@ struct resolved_style {
   nalay::color background_color;
   nalay::color border_color;
 
-  std::optional<vec2i>                                    size;
+  std::optional<unit>                                      width;
+  std::optional<unit>                                      height;
   std::optional<std::pair<nalay::alignment, nalay::alignment>> alignment;
 };
 
@@ -207,7 +209,8 @@ struct node {
   auto margin(this auto&& self, insets m)              { self.m_style.margin  = m;          return self; }
   auto bg_color(this auto&& self, ::nalay::color c)    { self.m_style.background_color = c; return self; }
   auto color(this auto&& self, ::nalay::color c)       { self.m_style.color = c;            return self; }
-  auto size(this auto&& self, int w, int h)            { self.m_style.size = vec2i{w, h}; return self; }
+  auto size(this auto&& self, unit w, unit h)          { self.m_style.width = w; self.m_style.height = h; return self; }
+  auto size(this auto&& self, int w, int h)            { self.m_style.width = unit::px(w); self.m_style.height = unit::px(h); return self; }
   auto border_radius(this auto&& self, int r)          { self.m_style.border_radius = r;    return self; }
   auto font_size(this auto&& self, int fs)             { self.m_style.font_size = fs;       return self; }
   auto display_font(this auto&& self,
@@ -240,7 +243,7 @@ struct node {
   auto computed_pos()  const -> vec2i { return m_pos;  }
 
   virtual ~node() = default;
-  virtual void measure() = 0;
+  virtual void measure(vec2i available = {}) = 0;
   virtual void place(vec2i origin) { m_pos = origin; }
   virtual void emit(render_queue& queue) const = 0;
   virtual void on_focus() {}
@@ -264,7 +267,8 @@ struct node {
       .background_color = self.m_style.background_color.or_else([&]{ return def.background_color; }).value_or(nalay::color{}),
       .border_color     = self.m_style.border_color.or_else([&]{ return def.border_color; }).value_or(nalay::color{}),
 
-      .size      = self.m_style.size.or_else([&]{ return def.size; }),
+      .width     = self.m_style.width.or_else([&]{ return def.width; }),
+      .height    = self.m_style.height.or_else([&]{ return def.height; }),
       .alignment = self.m_style.alignment.or_else([&]{ return def.alignment; }),
     };
   }
@@ -309,7 +313,17 @@ protected:
     }
   }
 
-  void compute(render_queue& queue) { measure(); place({0, 0}); emit(queue); }
+  void compute(render_queue& queue) { measure({}); place({0, 0}); emit(queue); }
+
+  static auto resolve_dim(std::optional<unit> u, int available) -> std::optional<int> {
+    if (!u) return std::nullopt;
+    switch (u->type) {
+      case unit::kind::fixed:   return u->value;
+      case unit::kind::percent: return available * u->value / 100;
+      case unit::kind::fill:    return available;
+    }
+    return std::nullopt;
+  }
 
   void emit_background(render_queue& queue, const resolved_style& rs) const {
     queue.emplace(
@@ -464,8 +478,7 @@ struct input : public node {
     else if constexpr (std::same_as<T, std::string>) {
       if (event.key == nalay::key::backspace) { erase_character(); return; }
       
-      auto padding = m_style.padding.value_or({});
-      auto container_width =  m_style.size.value().x;
+      auto container_width = m_size.x;
 
       if (measure_text_size(m_value).x + 2 * m_style.font_size.value_or(defaults::font_size) > container_width) { return; }
       if (event.codepoint >= 0x20) {
@@ -494,32 +507,35 @@ struct input : public node {
     //Set carret
   }
 
-  void measure() override {
+  void measure(vec2i available = {}) override {
     auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
+    auto ow = resolve_dim(rs.width,  available.x);
+    auto oh = resolve_dim(rs.height, available.y);
+    if (ow && oh) { m_size = {*ow, *oh}; return; }
+    vec2i natural{};
     if constexpr(std::same_as<T, std::string>) {
       auto text_sz = measure_text_size(m_value);
-      m_size = text_sz + vec2i{
+      natural = text_sz + vec2i{
         rs.padding.get_left() + rs.padding.get_right(),
         rs.padding.get_top()  + rs.padding.get_bottom()
       };
     } else {
       auto num_digits = std::floor(std::log10(std::abs(m_value))) + 1;
       auto font_size  = m_style.font_size.value_or(defaults::font_size);
-      auto text_sz    = vec2i { font_size * num_digits, font_size };
-      m_size = text_sz + vec2i{
+      auto text_sz    = vec2i { static_cast<int>(font_size * num_digits), font_size };
+      natural = text_sz + vec2i{
         rs.padding.get_left() + rs.padding.get_right(),
         rs.padding.get_top()  + rs.padding.get_bottom()
       };
     }
+    m_size = {ow ? *ow : natural.x, oh ? *oh : natural.y};
   }
 
   void emit(render_queue& queue) const override {
     auto rs = resolve();
     emit_background(queue, rs);
     if constexpr (std::same_as<T, std::string>) {
-      auto padding = m_style.padding.value_or({});
-      auto container_width =  m_style.size.value().x;
+      auto container_width = m_size.x;
       if (measure_text_size(m_value).x + 2 * m_style.font_size.value_or(defaults::font_size) > container_width) {
         emit_text(queue, m_value.substr(0, m_value.size() - 3) + "..", rs);
       } else {
@@ -551,21 +567,25 @@ auto default_style() const -> nalay::style {
     .alignment        = std::nullopt,
     .text_alignment   = text_alignment::center,
     .display_font     = std::nullopt,
-    .size             = std::nullopt,
+    .width            = std::nullopt,
+    .height           = std::nullopt,
     .border_radius    = defaults::button_border_radius,
     .letter_spacing   = std::nullopt,
     .font_size        = std::nullopt,
   };
 }
 
-  void measure() override {
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
+  void measure(vec2i available = {}) override {
+    auto rs  = resolve();
+    auto ow  = resolve_dim(rs.width,  available.x);
+    auto oh  = resolve_dim(rs.height, available.y);
+    if (ow && oh) { m_size = {*ow, *oh}; return; }
     auto text_sz = measure_text_size(text);
-    m_size = text_sz + vec2i{
+    vec2i natural = text_sz + vec2i{
       rs.padding.get_left() + rs.padding.get_right(),
       rs.padding.get_top()  + rs.padding.get_bottom()
     };
+    m_size = {ow ? *ow : natural.x, oh ? *oh : natural.y};
   }
 
   void emit(render_queue& queue) const override {
@@ -579,10 +599,13 @@ struct label : public node {
   std::string text;
   explicit label(std::string s) : text(std::move(s)) {}
 
-  void measure() override {
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
-    m_size = measure_text_with_padding(text);
+  void measure(vec2i available = {}) override {
+    auto rs  = resolve();
+    auto ow  = resolve_dim(rs.width,  available.x);
+    auto oh  = resolve_dim(rs.height, available.y);
+    if (ow && oh) { m_size = {*ow, *oh}; return; }
+    vec2i natural = measure_text_with_padding(text);
+    m_size = {ow ? *ow : natural.x, oh ? *oh : natural.y};
   }
 
   void emit(render_queue& queue) const override {
@@ -616,20 +639,66 @@ struct layout : public node {
   template <UIElement T> requires (!std::is_reference_v<T>)
   void add(T&& child) { components.push_back(nalay_ctx->make_node<T>(std::forward<T>(child))); }
 
-  void measure() override {
-    for (node* child : components)
-    child->measure();
+  void measure(vec2i available = {}) override {
+    auto rs  = resolve();
+    auto& pad = rs.padding;
 
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
+    auto ow = resolve_dim(rs.width,  available.x);
+    auto oh = resolve_dim(rs.height, available.y);
 
-    auto  content = compute_children_extent();
-    auto& pad     = rs.padding;
-
-    m_size = content + vec2i{
-      pad.get_left() + pad.get_right(),
-      pad.get_top()  + pad.get_bottom()
+    vec2i content_avail{
+      ow ? *ow - pad.get_left() - pad.get_right() : available.x - pad.get_left() - pad.get_right(),
+      oh ? *oh - pad.get_top()  - pad.get_bottom() : available.y - pad.get_top()  - pad.get_bottom()
     };
+
+    // Pass 1: measure all non-fill children along the main axis
+    int fill_count = 0;
+    int used_main  = 0;
+    int n          = static_cast<int>(components.size());
+    int gap        = defaults::padding * (n > 1 ? n - 1 : 0);
+
+    for (node* child : components) {
+      bool child_fills = (dir_ == direction::horizontal)
+        ? (child->m_style.width  && child->m_style.width->type  == unit::kind::fill)
+        : (child->m_style.height && child->m_style.height->type == unit::kind::fill);
+
+      if (child_fills) {
+        ++fill_count;
+      } else {
+        child->measure(content_avail);
+        auto cs = child->computed_size();
+        used_main += (dir_ == direction::horizontal) ? cs.x : cs.y;
+      }
+    }
+
+    // Pass 2: distribute remaining space to fill children
+    if (fill_count > 0) {
+      int main_avail = (dir_ == direction::horizontal) ? content_avail.x : content_avail.y;
+      int fill_main  = (main_avail - used_main - gap) / fill_count;
+      fill_main      = std::max(fill_main, 0);
+
+      vec2i fill_avail = (dir_ == direction::horizontal)
+        ? vec2i{fill_main, content_avail.y}
+        : vec2i{content_avail.x, fill_main};
+
+      for (node* child : components) {
+        bool child_fills = (dir_ == direction::horizontal)
+          ? (child->m_style.width  && child->m_style.width->type  == unit::kind::fill)
+          : (child->m_style.height && child->m_style.height->type == unit::kind::fill);
+        if (child_fills) child->measure(fill_avail);
+      }
+    }
+
+    // Set own size
+    if (ow && oh) {
+      m_size = {*ow, *oh};
+    } else {
+      auto content = compute_children_extent();
+      m_size = {
+        ow ? *ow : content.x + pad.get_left() + pad.get_right(),
+        oh ? *oh : content.y + pad.get_top()  + pad.get_bottom()
+      };
+    }
   }
 
   void place(vec2i origin) override {
