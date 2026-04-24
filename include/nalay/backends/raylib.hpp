@@ -24,7 +24,7 @@ struct raylib_font : public nalay::font {
     m_font = LoadFont(path.data());
     if (m_font.texture.id == 0)
       throw std::runtime_error(std::string("raylib_font: failed to load '") + path.data() + "'");
-    
+
     SetTextureFilter(m_font.texture, TEXTURE_FILTER_BILINEAR);
   }
 
@@ -73,13 +73,89 @@ struct raylib_font_provider : public nalay::font_provider {
     if (it == fonts_.end()) throw std::runtime_error(std::string("raylib_font_provider: '") + name.data() + "' not found");
     return *it->second;
   }
-  
+
   auto set_default(std::string_view name) { fonts_["default"] = std::make_unique<raylib_font>(name); }
 
   auto default_font() const -> const nalay::font& override { return get("default"); }
 
 private:
   std::unordered_map<std::string, std::unique_ptr<raylib_font>> fonts_;
+};
+
+struct raylib_texture : public nalay::texture {
+  explicit raylib_texture(std::string_view path) {
+    Image img = LoadImage(path.data());
+    if (img.data == nullptr)
+      throw std::runtime_error(std::string("raylib_texture: failed to load '") + path.data() + "'");
+
+    m_texture = LoadTextureFromImage(img);
+    UnloadImage(img);
+
+    if (m_texture.id == 0)
+      throw std::runtime_error(std::string("raylib_texture: failed to create texture from '") + path.data() + "'");
+
+    SetTextureFilter(m_texture, TEXTURE_FILTER_BILINEAR);
+  }
+
+  explicit raylib_texture(Texture2D tex) : m_texture(tex) {
+    if (m_texture.id == 0)
+      throw std::runtime_error("raylib_texture: invalid texture");
+    SetTextureFilter(m_texture, TEXTURE_FILTER_BILINEAR);
+  }
+
+  ~raylib_texture() override {
+    UnloadTexture(m_texture);
+  }
+
+  auto get_info() const -> nalay::image_info override {
+    nalay::image_format format;
+    switch (m_texture.format) {
+      case PIXELFORMAT_UNCOMPRESSED_R8G8B8A8:
+        format = nalay::image_format::rgba8;
+        break;
+      case PIXELFORMAT_UNCOMPRESSED_R8G8B8:
+        format = nalay::image_format::rgb8;
+        break;
+      case PIXELFORMAT_UNCOMPRESSED_GRAYSCALE:
+        format = nalay::image_format::alpha8;
+        break;
+      default:
+        format = nalay::image_format::rgba8;
+        break;
+    }
+
+    return nalay::image_info{
+      .format  = format,
+      .size    = nalay::vec2i{ m_texture.width, m_texture.height },
+      .mipmaps = static_cast<uint32_t>(m_texture.mipmaps)
+    };
+  }
+
+  auto raw() const -> const Texture2D& { return m_texture; }
+
+private:
+  Texture2D m_texture{};
+};
+
+struct raylib_image_provider : public nalay::image_provider {
+  raylib_image_provider() = default;
+  ~raylib_image_provider() = default;
+
+  void load(std::string_view name, std::string_view path) override {
+    auto [it, inserted] = textures_.try_emplace(std::string(name), std::make_unique<raylib_texture>(path));
+    if (!inserted)
+      throw std::runtime_error(std::string("raylib_image_provider: '") + name.data() + "' is already loaded");
+  }
+
+  auto get(std::string_view name) const -> const nalay::texture& override {
+    const auto it = textures_.find(std::string(name));
+    if (it == textures_.end())
+      throw std::runtime_error(std::string("raylib_image_provider: '") + name.data() + "' not found");
+    return *it->second;
+  }
+
+private:
+  std::unordered_map<std::string, std::unique_ptr<raylib_texture>> textures_;
 };
 
 struct raylib_renderer: public nalay::renderer {
@@ -144,9 +220,42 @@ private:
       );
   }
 
-  void render_img (const nalay::render_cmd& cmd)
+  void render_img(const nalay::render_cmd& cmd)
   {
-    //TODO:
+    auto content = std::get<nalay::primitive::img>(cmd.content);
+    const auto* raylib_tex = dynamic_cast<const raylib_texture*>(&content.texture.get());
+
+    if (!raylib_tex) {
+      // Fallback: render a placeholder rectangle if texture isn't a raylib texture
+      DrawRectangle(cmd.pos.x, cmd.pos.y, content.size.x, content.size.y, PINK);
+      return;
+    }
+
+    const auto& tex = raylib_tex->raw();
+
+    // Calculate scale to fit content.size
+    float scale_x = static_cast<float>(content.size.x) / static_cast<float>(tex.width);
+    float scale_y = static_cast<float>(content.size.y) / static_cast<float>(tex.height);
+
+    // Use uniform scaling (fit image within bounds, preserving aspect ratio)
+    float scale = std::min(scale_x, scale_y);
+
+    // Center the image if it doesn't fill the entire area
+    int scaled_w = static_cast<int>(tex.width * scale);
+    int scaled_h = static_cast<int>(tex.height * scale);
+    int offset_x = (content.size.x - scaled_w) / 2;
+    int offset_y = (content.size.y - scaled_h) / 2;
+
+    DrawTextureEx(
+      tex,
+      Vector2{
+        static_cast<float>(cmd.pos.x + offset_x),
+        static_cast<float>(cmd.pos.y + offset_y)
+      },
+      0.0f,  // rotation
+      scale, // scale to fit
+      WHITE
+    );
   }
 
   void render_text(const nalay::render_cmd& cmd)
@@ -391,4 +500,5 @@ auto to_raylib_mouse(nalay::mouse_button btn) -> int {
     case nalay::mouse_button::right:  return MOUSE_BUTTON_RIGHT;
     case nalay::mouse_button::middle: return MOUSE_BUTTON_MIDDLE;
   }
+  return MOUSE_BUTTON_LEFT; // default fallback
 }

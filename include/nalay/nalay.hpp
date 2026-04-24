@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cassert>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -21,11 +20,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "allocators.hpp"
+#include "nalay/types.hpp"
 #include "providers.hpp"
 #include "defaults.hpp"
-
-
 
 namespace nalay {
 
@@ -34,8 +31,6 @@ struct is_string_type : std::false_type {};
 
 template<typename CharT, typename Traits, typename Alloc>
 struct is_string_type<std::basic_string<CharT, Traits, Alloc>> : std::true_type {};
-
-static thread_local context* nalay_ctx = nullptr;
 
 enum class render_cmd_type : uint8_t {
   img,
@@ -60,7 +55,6 @@ enum class text_alignment : uint8_t {
   stretch
 };
 
-
 enum class interactivity : uint8_t {
   none       = 0,
   focusable  = 1 << 0,
@@ -68,14 +62,13 @@ enum class interactivity : uint8_t {
   hoverable  = 1 << 2,
 };
 
-
 template <typename Signature>
 struct event_listener;
 
 template <typename Ret, typename... Args>
 struct event_listener<Ret(Args...)> {
   std::vector<std::function<Ret(Args...)>> listeners;
- 
+
   template <typename... T>
   auto notify_all(T&&... args) const -> void { for(const auto& listener : listeners) { listener(std::forward<T>(args)...); } }
   template <typename T>
@@ -92,7 +85,7 @@ struct style {
   std::optional<std::pair<nalay::alignment, nalay::alignment>> alignment;
   std::optional<nalay::text_alignment> text_alignment;
   std::optional<std::reference_wrapper<const nalay::font>> display_font;
-  std::optional<vec2i> size;
+  std::optional<vec2<unit>> size;
   std::optional<int> border_radius;
   std::optional<int> letter_spacing;
   std::optional<int> font_size;
@@ -100,8 +93,9 @@ struct style {
 
 struct resolved_style {
   insets padding;
-  int    border_size;
-  int    border_radius;
+  insets margin;
+  int border_size;
+  int border_radius;
 
   std::reference_wrapper<const nalay::font> font;
   int font_size;
@@ -112,7 +106,7 @@ struct resolved_style {
   nalay::color background_color;
   nalay::color border_color;
 
-  std::optional<vec2i>                                    size;
+  std::optional<vec2<nalay::unit>> size;
   std::optional<std::pair<nalay::alignment, nalay::alignment>> alignment;
 };
 
@@ -131,8 +125,8 @@ struct text {
 };
 
 struct img {
-  std::span<char> bytes;
-  int format;
+  std::reference_wrapper<const nalay::texture> texture;
+  vec2i size;
 };
 
 struct rect {
@@ -154,7 +148,6 @@ struct render_cmd {
   vec2i pos;
 };
 
-namespace ui { struct layout; }
 
 struct render_queue {
   render_queue()                              = default;
@@ -179,41 +172,171 @@ using border_radius = insets;
 
 static constexpr auto operator|(interactivity a, interactivity b) -> interactivity;
 static constexpr auto operator&(interactivity a, interactivity b) -> bool;
-[[maybe_unused]] static auto get_ctx() -> context*;
-[[maybe_unused]] static auto focused_node() -> ui::node*;
 
+[[maybe_unused]] static void place(ui::node& node, vec2i origin);
 [[maybe_unused]] static void request_focus(ui::node* node);
 [[maybe_unused]] static void clear_focus();
-[[maybe_unused]] static void set_ctx(context* ctx);
 
-template <typename T> requires std::derived_from<std::remove_cvref_t<T>, ui::layout>
+[[maybe_unused]] static auto focused_node() -> ui::node*;
+
+namespace ui { struct node; }
+
+template <typename T> requires std::derived_from<std::remove_cvref_t<T>, ui::node>
 [[maybe_unused]] void poll(T&& root);
+
+namespace ui { struct node; }
+
+template <typename T> concept UIElement = std::derived_from<std::remove_cvref_t<T>, ui::node>;
 
 namespace ui {
 
 struct node {
+  enum class children_direction { vertical, horizontal };
+  using child_list = std::vector<std::unique_ptr<node>>;
 
-  friend class layout;
+  explicit node() : m_dir(children_direction::vertical), m_parent(nullptr) {}
+  explicit node(children_direction dir) : m_dir(dir), m_parent(nullptr) {}
+
+  explicit node(children_direction dir, auto&&... children) : m_dir(dir), m_parent(nullptr)
+  {
+    (add(std::make_unique<std::remove_cvref_t<decltype(children)>>(
+      std::forward<decltype(children)>(children))), ...);
+  }
 
 
-  auto clicked(this auto&& self, auto&& func)  { self.m_click_listener.add(std::forward<decltype(func)>(func)); return self; }
-  auto hovered(this auto&& self, auto&& func)  { self.m_hover_listener.add(std::forward<decltype(func)>(func)); return self; }
-  auto focused(this auto&& self, auto&& func)  { self.m_focus_listener.add(std::forward<decltype(func)>(func)); return self; }
-  auto unfocused(this auto&& self, auto&& func)  { self.m_unfocus_listener.add(std::forward<decltype(func)>(func)); return self; }
+  node(const node& other)
+    : m_dir(other.m_dir)
+    , m_style(other.m_style)
+    , m_parent(nullptr)
+    , m_id(other.m_id)
+    , m_size(other.m_size)
+    , m_pos(other.m_pos)
+    , m_interactivity(other.m_interactivity)
+    , m_hovered(false)
+  {
+    m_components.reserve(other.m_components.size());
+    for (const auto& child : other.m_components) {
+      m_components.push_back(std::make_unique<node>(*child));
+    }
+  }
 
-  auto id(this auto&& self, std::string id)            { self.m_id    = std::move(id); return self; }
-  auto style(this auto&& self, ::nalay::style s)       { self.m_style = s;             return self; }
-  auto padding(this auto&& self, insets p)             { self.m_style.padding = p;          return self; }
-  auto margin(this auto&& self, insets m)              { self.m_style.margin  = m;          return self; }
-  auto bg_color(this auto&& self, ::nalay::color c)    { self.m_style.background_color = c; return self; }
-  auto color(this auto&& self, ::nalay::color c)       { self.m_style.color = c;            return self; }
-  auto size(this auto&& self, int w, int h)            { self.m_style.size = vec2i{w, h}; return self; }
-  auto border_radius(this auto&& self, int r)          { self.m_style.border_radius = r;    return self; }
-  auto font_size(this auto&& self, int fs)             { self.m_style.font_size = fs;       return self; }
+  node(node&& other) noexcept
+    : m_dir(other.m_dir)
+    , m_components(std::move(other.m_components))
+    , m_style(std::move(other.m_style))
+    , m_parent(nullptr)
+    , m_click_listener(std::move(other.m_click_listener))
+    , m_hover_listener(std::move(other.m_hover_listener))
+    , m_focus_listener(std::move(other.m_focus_listener))
+    , m_unfocus_listener(std::move(other.m_unfocus_listener))
+    , m_id(std::move(other.m_id))
+    , m_size(other.m_size)
+    , m_pos(other.m_pos)
+    , m_interactivity(other.m_interactivity)
+    , m_hovered(false)
+  {
+    // Update parent pointers of moved children
+    for (auto& child : m_components) {
+      child->m_parent = this;
+    }
+  }
+
+  node& operator=(const node& other) {
+    if (this != &other) {
+      m_dir = other.m_dir;
+      m_style = other.m_style;
+      m_id = other.m_id;
+      m_size = other.m_size;
+      m_pos = other.m_pos;
+      m_interactivity = other.m_interactivity;
+      m_hovered = false;
+      m_parent = nullptr;
+
+      m_components.clear();
+      m_components.reserve(other.m_components.size());
+      for (const auto& child : other.m_components) {
+        m_components.push_back(std::make_unique<node>(*child));
+      }
+    }
+    return *this;
+  }
+
+  node& operator=(node&& other) noexcept {
+    if (this != &other) {
+      m_dir = other.m_dir;
+      m_components = std::move(other.m_components);
+      m_style = std::move(other.m_style);
+      m_click_listener = std::move(other.m_click_listener);
+      m_hover_listener = std::move(other.m_hover_listener);
+      m_focus_listener = std::move(other.m_focus_listener);
+      m_unfocus_listener = std::move(other.m_unfocus_listener);
+      m_id = std::move(other.m_id);
+      m_size = other.m_size;
+      m_pos = other.m_pos;
+      m_interactivity = other.m_interactivity;
+      m_hovered = false;
+      m_parent = nullptr;
+
+      for (auto& child : m_components) {
+        child->m_parent = this;
+      }
+    }
+    return *this;
+  }
+
+  void add(std::unique_ptr<node> child) {
+    child->m_parent = this;
+    m_components.push_back(std::move(child));
+  } // TODO: ADD POISONED STATE, THIS IS A DANGEROUS OPERATION.
+
+  template <typename T> requires std::derived_from<std::remove_cvref_t<T>, node>
+  friend void nalay::poll(T&& root);
+
+  void compute(render_queue& queue) {
+    measure_intrinsic();
+    resolve_flex(m_size);
+    place({0, 0});
+    emit(queue);
+  }
+
+  void set_parent(node* new_parent)
+  {
+    if (m_parent) {
+      auto& siblings = m_parent->m_components;
+      auto it = std::find_if(siblings.begin(), siblings.end(), [&](const auto& ptr){
+        return ptr.get() == this;
+      });
+      if (it != siblings.end()) siblings.erase(it);
+    }
+
+    if (not new_parent) return;
+
+    for (node* p = new_parent; p; p = p->m_parent)
+      NALAY_ASSERT(p != this, "set_parent would create a cycle");
+
+    new_parent->m_components.push_back(std::unique_ptr<node>(this));
+    m_parent = new_parent;
+  }
+
+  auto clicked(this auto&& self, auto&& func) -> decltype(auto)   { self.m_click_listener.add(std::forward<decltype(func)>(func));   return std::forward<decltype(self)>(self); }
+  auto hovered(this auto&& self, auto&& func) -> decltype(auto) { self.m_hover_listener.add(std::forward<decltype(func)>(func));   return std::forward<decltype(self)>(self); }
+  auto focused(this auto&& self, auto&& func) -> decltype(auto) { self.m_focus_listener.add(std::forward<decltype(func)>(func));   return std::forward<decltype(self)>(self); }
+  auto unfocused(this auto&& self, auto&& func) -> decltype(auto){ self.m_unfocus_listener.add(std::forward<decltype(func)>(func)); return std::forward<decltype(self)>(self); }
+
+  auto id(this auto&& self, std::string id)         -> decltype(auto)  { self.m_id                     = std::move(id);            return std::forward<decltype(self)>(self); }
+  auto style(this auto&& self, ::nalay::style s)    -> decltype(auto)  { self.m_style                  = s;                        return std::forward<decltype(self)>(self); }
+  auto padding(this auto&& self, insets p)          -> decltype(auto)  { self.m_style.padding          = p;                        return std::forward<decltype(self)>(self); }
+  auto margin(this auto&& self, insets m)           -> decltype(auto)  { self.m_style.margin           = m;                        return std::forward<decltype(self)>(self); }
+  auto bg_color(this auto&& self, ::nalay::color c) -> decltype(auto)  { self.m_style.background_color = c;                        return std::forward<decltype(self)>(self); }
+  auto color(this auto&& self, ::nalay::color c)    -> decltype(auto)  { self.m_style.color            = c;                        return std::forward<decltype(self)>(self); }
+  auto size(this auto&& self, vec2<unit> sz)        -> decltype(auto)  { self.m_style.size             = sz;                       return std::forward<decltype(self)>(self); }
+  auto size(this auto&& self, unit w, unit h)       -> decltype(auto)  { self.m_style.size             = vec2<unit>{w, h};         return std::forward<decltype(self)>(self); }
+  auto border_radius(this auto&& self, int r)       -> decltype(auto)  { self.m_style.border_radius    = r;                        return std::forward<decltype(self)>(self); }
+  auto font_size(this auto&& self, int fs)          -> decltype(auto)  { self.m_style.font_size        = fs;                       return std::forward<decltype(self)>(self); }
   auto display_font(this auto&& self,
-                    std::reference_wrapper<const nalay::font> f) { self.m_style.display_font = f; return self; }
+                    std::reference_wrapper<const nalay::font> f) -> decltype(auto) { self.m_style.display_font = f; return std::forward<decltype(self)>(self); }
   auto align(this auto&& self,
-             std::pair<::nalay::alignment, ::nalay::alignment> a) { self.x_align(a.first); self.y_align(a.second); return self; }
+             std::pair<::nalay::alignment, ::nalay::alignment> a) -> decltype(auto) { self.x_align(a.first); self.y_align(a.second); return std::forward<decltype(self)>(self); }
 
   auto x_align(this auto&& self, ::nalay::alignment a) {
     if (a == ::nalay::alignment::top || a == ::nalay::alignment::bottom)
@@ -230,55 +353,285 @@ struct node {
 
   auto interactive(this auto&& self, interactivity flags) { self.m_interactivity = flags; return self; }
 
-  auto is_focused()    const -> bool         { return nalay_ctx->focused_node == this; }
-  auto is_hovered()    const -> bool         { return m_hovered; }
-  auto can_focus()     const -> bool         { return m_interactivity & interactivity::focusable; }
-  auto can_click()     const -> bool         { return m_interactivity & interactivity::clickable; }
-  auto can_hover()     const -> bool         { return m_interactivity & interactivity::hoverable; }
-  
+  auto is_focused()    const -> bool  { return nalay::context::instance().focused_node == this; }
+  auto is_hovered()    const -> bool  { return m_hovered; }
+  auto can_focus()     const -> bool  { return m_interactivity & interactivity::focusable; }
+  auto can_click()     const -> bool  { return m_interactivity & interactivity::clickable; }
+  auto can_hover()     const -> bool  { return m_interactivity & interactivity::hoverable; }
   auto computed_size() const -> vec2i { return m_size; }
   auto computed_pos()  const -> vec2i { return m_pos;  }
 
   virtual ~node() = default;
-  virtual void measure() = 0;
-  virtual void place(vec2i origin) { m_pos = origin; }
-  virtual void emit(render_queue& queue) const = 0;
-  virtual void on_focus() {}
-  virtual void on_blur()  {}
-
   auto default_style() const -> nalay::style { return {}; }
 
   auto resolve(this auto const& self) -> resolved_style {
     auto def = self.default_style();
     return {
-      .padding       = self.m_style.padding.or_else([&]{ return def.padding; }).value_or(insets{}),
-      .border_size   = self.m_style.border_size.or_else([&]{ return def.border_size; }).value_or(0),
-      .border_radius = self.m_style.border_radius.or_else([&]{ return def.border_radius; }).value_or(0),
+      .padding        = self.m_style.padding       .or_else([&]{ return def.padding;        }).value_or(insets{}),
+      .margin         = self.m_style.margin        .or_else([&]{ return def.margin;         }).value_or(insets{}),
+      .border_size    = self.m_style.border_size   .or_else([&]{ return def.border_size;    }).value_or(0),
+      .border_radius  = self.m_style.border_radius .or_else([&]{ return def.border_radius;  }).value_or(0),
 
-      .font           = self.m_style.display_font.or_else([&]{ return def.display_font; }).value_or(nalay_ctx->fonts.get().default_font()),
-      .font_size      = self.m_style.font_size.or_else([&]{ return def.font_size; }).value_or(defaults::font_size),
+      .font           = self.m_style.display_font  .or_else([&]{ return def.display_font;   }).value_or(nalay::context::instance().fonts().get().default_font()),
+      .font_size      = self.m_style.font_size     .or_else([&]{ return def.font_size;      }).value_or(defaults::font_size),
       .letter_spacing = self.m_style.letter_spacing.or_else([&]{ return def.letter_spacing; }).value_or(0),
       .text_alignment = self.m_style.text_alignment.or_else([&]{ return def.text_alignment; }).value_or(text_alignment::center),
 
-      .color            = self.m_style.color.or_else([&]{ return def.color; }).value_or(color::black()),
+      .color            = self.m_style.color           .or_else([&]{ return def.color;            }).value_or(color::black()),
       .background_color = self.m_style.background_color.or_else([&]{ return def.background_color; }).value_or(nalay::color{}),
-      .border_color     = self.m_style.border_color.or_else([&]{ return def.border_color; }).value_or(nalay::color{}),
+      .border_color     = self.m_style.border_color    .or_else([&]{ return def.border_color;     }).value_or(nalay::color{}),
 
-      .size      = self.m_style.size.or_else([&]{ return def.size; }),
+      .size      = self.m_style.size     .or_else([&]{ return def.size;      }),
       .alignment = self.m_style.alignment.or_else([&]{ return def.alignment; }),
     };
   }
 
+private:
+
+  auto compute_children_extent() const -> vec2i {
+    vec2i extent{};
+    for (auto& child : m_components) {
+      vec2i cs = child->computed_size();
+      if (m_dir == children_direction::vertical) {
+        extent.y += cs.y + defaults::padding;
+        extent.x  = std::max(extent.x, cs.x);
+      } else {
+        extent.x += cs.x + defaults::padding;
+        extent.y  = std::max(extent.y, cs.y);
+      }
+    }
+    return extent;
+  }
+
+  auto initial_cursor(
+    std::pair<alignment, alignment> align_pair,
+    vec2i content_size,
+    vec2i children_extent
+  ) const -> vec2i {
+    vec2i cursor{};
+    if (m_dir == children_direction::vertical) {
+      if      (align_pair.second == alignment::bottom) cursor.y = content_size.y - children_extent.y;
+      else if (align_pair.second == alignment::center) cursor.y = (content_size.y - children_extent.y) / 2;
+    } else {
+      if      (align_pair.first == alignment::right)  cursor.x = content_size.x - children_extent.x;
+      else if (align_pair.first == alignment::center) cursor.x = (content_size.x - children_extent.x) / 2;
+    }
+    return cursor;
+  }
+
+  auto cross_offset(
+    std::pair<alignment, alignment> align_pair,
+    vec2i content_size,
+    vec2i child_size
+  ) const -> vec2i {
+    vec2i cross{};
+    if (m_dir == children_direction::vertical) {
+      if      (align_pair.first == alignment::right)  cross.x = content_size.x - child_size.x;
+      else if (align_pair.first == alignment::center) cross.x = (content_size.x - child_size.x) / 2;
+    } else {
+      if      (align_pair.second == alignment::bottom) cross.y = content_size.y - child_size.y;
+      else if (align_pair.second == alignment::center) cross.y = (content_size.y - child_size.y) / 2;
+    }
+    return cross;
+  }
+
 protected:
 
+  friend void nalay::place(ui::node& root, vec2i origin);
+  friend void nalay::poll(auto&& root);
+  friend void nalay::request_focus(ui::node *node);
+  friend void nalay::clear_focus();
+
+  virtual void _on_focus() {}
+  virtual void _on_blur()  {}
   virtual void _on_click() {}
   virtual void _on_key(keyboard_event event) { (void) event; }
 
+  auto margin_extent() const -> vec2i {
+    auto rs = resolve();
+    return { rs.margin.get_left() + rs.margin.get_right(),
+      rs.margin.get_top()  + rs.margin.get_bottom() };
+  }
+  auto padding_extent() const -> vec2i {
+    auto rs = resolve();
+    return { rs.padding.get_left() + rs.padding.get_right(),
+      rs.padding.get_top()  + rs.padding.get_bottom() };
+  }
+
+  auto outer_size() const -> vec2i { return m_size + margin_extent(); }
+
+  virtual void measure_intrinsic() {
+    for (auto& child : m_components) child->measure_intrinsic();
+
+    auto rs      = resolve();
+    auto content = compute_children_extent();
+    auto pad     = padding_extent();
+    auto marg    = margin_extent();
+    auto intrinsic = content + pad;
+
+    int w = intrinsic.x;
+    int h = intrinsic.y;
+    if (rs.size) {
+      if (rs.size->x.type == unit::kind::fixed) w = rs.size->x.value;
+      if (rs.size->y.type == unit::kind::fixed) h = rs.size->y.value;
+    }
+
+    m_size = vec2i{ w, h } + marg;
+  }
+
+  virtual void resolve_flex(vec2i avail) {
+    auto rs = resolve();
+
+    auto resolve_self_axis = [](int intrinsic, int avail_axis, unit u) -> int {
+      switch (u.type) {
+        case unit::kind::fixed:   return u.value;
+        case unit::kind::percent: return std::max(intrinsic,
+                                                  static_cast<int>(static_cast<float>(avail_axis) * u.factor));
+        case unit::kind::fill:    return std::max(intrinsic, avail_axis);
+        case unit::kind::grow:    return std::max(intrinsic, avail_axis);
+      }
+      return intrinsic;
+    };
+
+    if (rs.size) {
+      m_size.x = resolve_self_axis(m_size.x, avail.x, rs.size->x);
+      m_size.y = resolve_self_axis(m_size.y, avail.y, rs.size->y);
+    }
+
+    auto marg = margin_extent();
+    auto pad  = padding_extent();
+    vec2i inner{ m_size.x - marg.x - pad.x, m_size.y - marg.y - pad.y };
+
+    const bool vertical  = (m_dir == children_direction::vertical);
+    const int  n         = static_cast<int>(m_components.size());
+    const int  gaps      = n > 0 ? (n - 1) * defaults::padding : 0;
+    const int  main_ext  = vertical ? inner.y : inner.x;
+    const int  cross_ext = vertical ? inner.x : inner.y;
+
+    auto main_unit_of  = [&](const std::unique_ptr<node>& c) -> unit {
+      auto cs = c->m_style.size;
+      if (!cs) return unit::fill(); 
+      return vertical ? cs->y : cs->x;
+    };
+    auto cross_unit_of = [&](const std::unique_ptr<node>& c) -> unit {
+      auto cs = c->m_style.size;
+      if (!cs) return unit::fill();
+      return vertical ? cs->x : cs->y;
+    };
+
+    int   claimed    = 0;
+    float total_grow = 0.f;
+
+    for (auto& child : m_components) {
+      unit u = main_unit_of(child);
+      int  child_intrinsic_main = vertical ? child->m_size.y : child->m_size.x;
+      switch (u.type) {
+        case unit::kind::fixed:   claimed    += u.value; break;
+        case unit::kind::percent: claimed    += static_cast<int>(static_cast<float>(main_ext) * u.factor); break;
+        case unit::kind::fill:    claimed    += child_intrinsic_main; break;
+        case unit::kind::grow:    total_grow += u.factor; break;
+      }
+    }
+
+    const int leftover = std::max(0, main_ext - claimed - gaps);
+
+    for (const auto& child : m_components) {
+      unit main_u  = main_unit_of(child);
+      unit cross_u = cross_unit_of(child);
+
+      int main_size = vertical ? child->m_size.y : child->m_size.x;
+      switch (main_u.type) {
+        case unit::kind::fixed:
+          main_size = main_u.value;
+          break;
+        case unit::kind::percent:
+          main_size = std::max(main_size, static_cast<int>(static_cast<float>(main_ext) * main_u.factor));
+          break;
+        case unit::kind::fill:
+          main_size = std::max(main_size, main_ext);
+          break;
+        case unit::kind::grow:
+          if (total_grow > 0.f) {
+            main_size = std::max(
+              main_size,
+              static_cast<int>(std::round(static_cast<float>(leftover) * (main_u.factor / total_grow)))
+            );
+          }
+          break;
+      }
+
+      int cs_size = vertical ? child->m_size.x : child->m_size.y;
+      switch (cross_u.type) {
+        case unit::kind::fixed:   cs_size = cross_u.value; break;
+        case unit::kind::percent: cs_size = std::max(cs_size, static_cast<int>(static_cast<float>(cross_ext) * cross_u.factor)); break;
+        case unit::kind::fill:    cs_size = std::max(cs_size, cross_ext); break;
+        case unit::kind::grow:    cs_size = std::max(cs_size, cross_ext); break;
+      }
+
+      vec2i child_avail = vertical
+        ? vec2i{ cs_size, main_size }
+        : vec2i{ main_size, cs_size };
+
+      child->resolve_flex(child_avail);
+    }
+  }
+
+  virtual void place(vec2i origin) {
+    m_pos = origin;
+
+    auto rs         = resolve();
+    auto& pad       = rs.padding;
+    auto& marg      = rs.margin;
+    auto  layout_al = rs.alignment.value_or({});
+
+    vec2i content_origin{
+      m_pos.x + marg.get_left() + pad.get_left(),
+      m_pos.y + marg.get_top() + pad.get_top()
+    };
+    vec2i content_size{
+      m_size.x - marg.get_left() - marg.get_right() - pad.get_left() - pad.get_right(),
+      m_size.y - marg.get_top() - marg.get_bottom() - pad.get_top()  - pad.get_bottom()
+    };
+
+    auto children_extent = compute_children_extent();
+    auto cursor          = initial_cursor(layout_al, content_size, children_extent);
+
+    for (auto& child : m_components) {
+      auto cs    = child->computed_size();
+      auto cross = cross_offset(layout_al, content_size, cs);
+      child->place(content_origin + cursor + cross);
+
+      if (m_dir == children_direction::vertical)
+        cursor.y += cs.y + defaults::padding;
+      else
+        cursor.x += cs.x + defaults::padding;
+    }
+  }
+
+  virtual void emit(render_queue& queue) const {
+    auto rs = resolve();
+    emit_background(queue, rs);
+    for (auto& child : m_components) child->emit(queue);
+  }
+
   virtual void poll() {
-    auto inputs = nalay_ctx->inputs;
+    auto inputs = nalay::context::instance().inputs();
+    auto mp  = inputs.get().mouse_pos();
+
+    auto* focused_before = nalay::context::instance().focused_node;
+
+    bool child_handled_event = false;
+    for (auto& child : m_components) {
+      child->poll();
+
+      if (nalay::context::instance().focused_node != focused_before) {
+        child_handled_event = true;
+        focused_before = nalay::context::instance().focused_node;
+      }
+    }
+
     if (m_interactivity == interactivity::none) return;
 
-    auto mp  = inputs.get().mouse_pos();
     bool hit = hit_test(mp);
 
     if (can_hover()) {
@@ -286,8 +639,7 @@ protected:
       if (m_hovered) m_hover_listener.notify_all();
     }
 
-
-    if (hit && can_click() && inputs.get().mouse_pressed(mouse_button::left)) {
+    if (hit && can_click() && inputs.get().mouse_pressed(mouse_button::left) && !child_handled_event) {
       if (can_focus()) {
         request_focus(this);
         m_focus_listener.notify_all();
@@ -295,7 +647,8 @@ protected:
       _on_click();
       m_click_listener.notify_all();
     }
-    if (!hit && inputs.get().mouse_pressed(mouse_button::left) && is_focused()) {
+
+    if (!hit && !child_handled_event && inputs.get().mouse_pressed(mouse_button::left) && is_focused()) {
       clear_focus();
       m_unfocus_listener.notify_all();
     }
@@ -309,18 +662,29 @@ protected:
     }
   }
 
-  void compute(render_queue& queue) { measure(); place({0, 0}); emit(queue); }
-
   void emit_background(render_queue& queue, const resolved_style& rs) const {
+    auto marg_ext = vec2i{
+      rs.margin.get_left() + rs.margin.get_right(),
+      rs.margin.get_top() + rs.margin.get_bottom()
+    };
+    auto bg_pos = vec2i{
+      m_pos.x + rs.margin.get_left(),
+      m_pos.y + rs.margin.get_top()
+    };
+    auto bg_size = vec2i{
+      m_size.x - marg_ext.x,
+      m_size.y - marg_ext.y
+    };
+
     queue.emplace(
       primitive::rect{
         .color         = rs.background_color,
         .border_color  = rs.border_color,
         .border_radius = rs.border_radius,
         .border_size   = rs.border_size,
-        .size          = m_size,
+        .size          = bg_size,
       },
-      m_pos
+      bg_pos
     );
   }
 
@@ -328,16 +692,15 @@ protected:
     auto text_sz = rs.font.get().measure(text, rs.font_size, rs.letter_spacing);
 
     vec2i inner_pos{
-      m_pos.x + rs.padding.get_left(),
-      m_pos.y + rs.padding.get_top()
+      m_pos.x + rs.margin.get_left() + rs.padding.get_left(),
+      m_pos.y + rs.margin.get_top() + rs.padding.get_top()
     };
     vec2i inner_sz{
-      m_size.x - rs.padding.get_left() - rs.padding.get_right(),
-      m_size.y - rs.padding.get_top()  - rs.padding.get_bottom()
+      m_size.x - rs.margin.get_left() - rs.margin.get_right() - rs.padding.get_left() - rs.padding.get_right(),
+      m_size.y - rs.margin.get_top() - rs.margin.get_bottom() - rs.padding.get_top()  - rs.padding.get_bottom()
     };
 
     vec2i alignment_offset{};
-
     if (rs.text_alignment == text_alignment::center) {
       alignment_offset = vec2i{ (inner_sz.x - text_sz.x) / 2, 0 };
     } else if (rs.text_alignment == text_alignment::right) {
@@ -364,10 +727,19 @@ protected:
       text_pos
     );
   }
- 
+
   auto hit_test(vec2i mp) const -> bool {
-    return mp.x >= m_pos.x && mp.x < m_pos.x + m_size.x
-    && mp.y >= m_pos.y && mp.y < m_pos.y + m_size.y;
+    auto rs = resolve();
+    vec2i hit_pos{
+      m_pos.x + rs.margin.get_left(),
+      m_pos.y + rs.margin.get_top()
+    };
+    vec2i hit_size{
+      m_size.x - rs.margin.get_left() - rs.margin.get_right(),
+      m_size.y - rs.margin.get_top() - rs.margin.get_bottom()
+    };
+    return mp.x >= hit_pos.x && mp.x < hit_pos.x + hit_size.x
+        && mp.y >= hit_pos.y && mp.y < hit_pos.y + hit_size.y;
   }
 
   auto measure_text_size(this auto const& self, const std::string& text) -> vec2i {
@@ -384,11 +756,17 @@ protected:
     };
   }
 
+  children_direction m_dir;
+  child_list    m_components;
   nalay::style  m_style;
+
+  node*         m_parent;
+
   event_listener<void()> m_click_listener;
   event_listener<void()> m_hover_listener;
   event_listener<void()> m_focus_listener;
   event_listener<void()> m_unfocus_listener;
+
   std::string   m_id;
   vec2i         m_size{};
   vec2i         m_pos{};
@@ -400,32 +778,36 @@ protected:
   bool          m_hovered{false};
 };
 
-template <typename T> concept UIElement = std::derived_from<std::remove_cvref_t<T>, node>;
-
 template <typename T> requires (std::is_arithmetic_v<T> or std::same_as<T, std::string>)
 struct input : public node {
   T m_value{};
   T m_placeholder{};
 
-  auto placeholder(this auto&& self, T&& placeholder) { self.m_placeholder = std::forward<T>(placeholder); return self; }
-  auto value_changed(this auto&& self, auto&& func)  { self.m_changed_listeners.add(std::forward<decltype(func)>(func)); return self; }
+  auto placeholder(this auto&& self, T&& placeholder)  { self.m_placeholder = std::forward<T>(placeholder); return std::forward<decltype(self)>(self); }
+  auto value_changed(this auto&& self, auto&& func)    { self.m_changed_listeners.add(std::forward<decltype(func)>(func)); return std::forward<decltype(self)>(self); }
 
   auto default_style() const -> nalay::style {
     return {
       .padding          = insets{ defaults::button_padding.x, defaults::button_padding.y },
+      .margin           = std::nullopt,
       .border_size      = defaults::button_border_size,
       .border_color     = defaults::button_border_color,
       .background_color = defaults::button_background,
       .color            = defaults::button_foreground,
+      .alignment        = std::nullopt,
       .text_alignment   = text_alignment::left,
+      .display_font     = std::nullopt,
+      .size             = std::nullopt,
       .border_radius    = defaults::button_border_radius,
+      .letter_spacing   = std::nullopt,
+      .font_size        = std::nullopt,
     };
   }
 
   void erase_character() {
     if (!m_value.empty()) {
-       do { m_value.pop_back(); }
-       while (!m_value.empty() && (m_value.back() & 0xC0) == 0x80);
+      do { m_value.pop_back(); }
+      while (!m_value.empty() && (m_value.back() & 0xC0) == 0x80);
     }
   }
 
@@ -434,20 +816,20 @@ struct input : public node {
 
   void poll() override {
     node::poll();
-    auto inputs = nalay_ctx->inputs;
+    auto inputs = nalay::context::instance().inputs();
     if (not inputs.get().key_down(nalay::key::backspace)) {
       m_pressed_timer = 0.0f;
       return;
     }
     if (m_pressed_timer < 0.5f) {
-      m_pressed_timer += nalay_ctx->delta_time;
+      m_pressed_timer += nalay::context::instance().delta_time;
       return;
     }
     if (m_erased_timer > .01f) {
       erase_character();
       m_erased_timer = 0.0f;
     } else {
-      m_erased_timer += nalay_ctx->delta_time;
+      m_erased_timer += nalay::context::instance().delta_time;
     }
   }
 
@@ -463,9 +845,7 @@ struct input : public node {
     }
     else if constexpr (std::same_as<T, std::string>) {
       if (event.key == nalay::key::backspace) { erase_character(); return; }
-      
-      auto padding = m_style.padding.value_or({});
-      auto container_width =  m_style.size.value().x;
+      auto container_width = m_size.x;
 
       if (measure_text_size(m_value).x + 2 * m_style.font_size.value_or(defaults::font_size) > container_width) { return; }
       if (event.codepoint >= 0x20) {
@@ -491,37 +871,42 @@ struct input : public node {
   }
 
   void _on_click() override {
-    //Set carret
+    // Set caret
   }
 
-  void measure() override {
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
-    if constexpr(std::same_as<T, std::string>) {
-      auto text_sz = measure_text_size(m_value);
-      m_size = text_sz + vec2i{
-        rs.padding.get_left() + rs.padding.get_right(),
-        rs.padding.get_top()  + rs.padding.get_bottom()
-      };
+  void measure_intrinsic() override {
+    auto rs   = resolve();
+    auto pad  = padding_extent();
+    auto marg = margin_extent();
+
+    vec2i text_sz;
+    if constexpr (std::same_as<T, std::string>) {
+      text_sz = measure_text_size(m_value);
     } else {
-      auto num_digits = std::floor(std::log10(std::abs(m_value))) + 1;
+      auto num_digits = m_value == 0
+        ? 1
+        : static_cast<int>(std::floor(std::log10(std::abs(static_cast<double>(m_value)))) + 1);
       auto font_size  = m_style.font_size.value_or(defaults::font_size);
-      auto text_sz    = vec2i { font_size * num_digits, font_size };
-      m_size = text_sz + vec2i{
-        rs.padding.get_left() + rs.padding.get_right(),
-        rs.padding.get_top()  + rs.padding.get_bottom()
-      };
+      text_sz         = vec2i{ font_size * num_digits, font_size };
     }
+
+    int w = text_sz.x + pad.x;
+    int h = text_sz.y + pad.y;
+    if (rs.size) {
+      if (rs.size->x.type == unit::kind::fixed) w = rs.size->x.value;
+      if (rs.size->y.type == unit::kind::fixed) h = rs.size->y.value;
+    }
+    m_size = vec2i{ w, h } + marg;
   }
 
   void emit(render_queue& queue) const override {
     auto rs = resolve();
     emit_background(queue, rs);
     if constexpr (std::same_as<T, std::string>) {
-      auto padding = m_style.padding.value_or({});
-      auto container_width =  m_style.size.value().x;
+      auto container_width = m_size.x;
       if (measure_text_size(m_value).x + 2 * m_style.font_size.value_or(defaults::font_size) > container_width) {
-        emit_text(queue, m_value.substr(0, m_value.size() - 3) + "..", rs);
+        auto truncated = m_value.size() > 3 ? m_value.substr(0, m_value.size() - 3) + ".." : m_value;
+        emit_text(queue, truncated, rs);
       } else {
         emit_text(queue, m_value, rs);
       }
@@ -537,229 +922,155 @@ private:
 };
 
 struct button : public node {
-  std::string text;
+  reactive<std::string> text;
   explicit button(std::string s) : text(std::move(s)) {}
+  explicit button(reactive<std::string> reactive) : text(reactive) {}
 
-auto default_style() const -> nalay::style {
-  return {
-    .padding          = insets{ defaults::button_padding.x, defaults::button_padding.y },
-    .margin           = std::nullopt,
-    .border_size      = defaults::button_border_size,
-    .border_color     = defaults::button_border_color,
-    .background_color = defaults::button_background,
-    .color            = defaults::button_foreground,
-    .alignment        = std::nullopt,
-    .text_alignment   = text_alignment::center,
-    .display_font     = std::nullopt,
-    .size             = std::nullopt,
-    .border_radius    = defaults::button_border_radius,
-    .letter_spacing   = std::nullopt,
-    .font_size        = std::nullopt,
-  };
-}
-
-  void measure() override {
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
-    auto text_sz = measure_text_size(text);
-    m_size = text_sz + vec2i{
-      rs.padding.get_left() + rs.padding.get_right(),
-      rs.padding.get_top()  + rs.padding.get_bottom()
+  auto default_style() const -> nalay::style {
+    return {
+      .padding          = insets{ defaults::button_padding.x, defaults::button_padding.y },
+      .margin           = std::nullopt,
+      .border_size      = defaults::button_border_size,
+      .border_color     = defaults::button_border_color,
+      .background_color = defaults::button_background,
+      .color            = defaults::button_foreground,
+      .alignment        = std::nullopt,
+      .text_alignment   = text_alignment::center,
+      .display_font     = std::nullopt,
+      .size             = std::nullopt,
+      .border_radius    = defaults::button_border_radius,
+      .letter_spacing   = std::nullopt,
+      .font_size        = std::nullopt,
     };
+  }
+
+  void measure_intrinsic() override {
+    auto rs      = resolve();
+    auto text_sz = measure_text_size(text.get());
+    auto pad     = padding_extent();
+    auto marg    = margin_extent();
+
+    int w = text_sz.x + pad.x;
+    int h = text_sz.y + pad.y;
+    if (rs.size) {
+      if (rs.size->x.type == unit::kind::fixed) w = rs.size->x.value;
+      if (rs.size->y.type == unit::kind::fixed) h = rs.size->y.value;
+    }
+    m_size = vec2i{ w, h } + marg;
   }
 
   void emit(render_queue& queue) const override {
     auto rs = resolve();
     emit_background(queue, rs);
-    emit_text(queue, text, rs);
+    emit_text(queue, text.get(), rs);
   }
 };
 
 struct label : public node {
-  std::string text;
+  reactive<std::string> text;
+
   explicit label(std::string s) : text(std::move(s)) {}
+  explicit label(reactive<std::string> reactive) : text(reactive) {}
 
-  void measure() override {
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
-    m_size = measure_text_with_padding(text);
+  void measure_intrinsic() override {
+    auto rs      = resolve();
+    auto text_sz = measure_text_size(text.get());
+    auto pad     = padding_extent();
+    auto marg    = margin_extent();
+
+    int w = text_sz.x + pad.x;
+    int h = text_sz.y + pad.y;
+    if (rs.size) {
+      if (rs.size->x.type == unit::kind::fixed) w = rs.size->x.value;
+      if (rs.size->y.type == unit::kind::fixed) h = rs.size->y.value;
+    }
+    m_size = vec2i{ w, h } + marg;
   }
 
   void emit(render_queue& queue) const override {
     auto rs = resolve();
     emit_background(queue, rs);
-    emit_text(queue, text, rs);
+    emit_text(queue, text.get(), rs);
   }
 };
 
-struct layout : public node {
-  enum class direction { vertical, horizontal };
+struct image : public node {
+  std::reference_wrapper<const nalay::texture> m_texture;
 
-  using child_list = std::vector<node*, slab_allocator<node*>>;
+  explicit image(const nalay::texture& tex) : m_texture(tex) {}
 
-  explicit layout(direction dir)
-    : dir_(dir)
-    , components(slab_allocator<node*>{ nalay_ctx->node_allocator }) {}
+  void measure_intrinsic() override {
+    auto rs   = resolve();
+    auto info = m_texture.get().get_info();
+    auto pad  = padding_extent();
+    auto marg = margin_extent();
 
-  explicit layout(direction dir, auto&&... children)
-    : dir_(dir)
-    , components(slab_allocator<node*>{ nalay_ctx->node_allocator })
-  {
-    (components.push_back(
-      nalay_ctx->make_node<std::decay_t<decltype(children)>>(
-        std::forward<decltype(children)>(children))
-    ), ...);
-  }
-
-  void add(node& child) { components.push_back(&child); }
-
-  template <UIElement T> requires (!std::is_reference_v<T>)
-  void add(T&& child) { components.push_back(nalay_ctx->make_node<T>(std::forward<T>(child))); }
-
-  void measure() override {
-    for (node* child : components)
-    child->measure();
-
-    auto rs = resolve();
-    if (rs.size.has_value()) { m_size = rs.size.value(); return; }
-
-    auto  content = compute_children_extent();
-    auto& pad     = rs.padding;
-
-    m_size = content + vec2i{
-      pad.get_left() + pad.get_right(),
-      pad.get_top()  + pad.get_bottom()
-    };
-  }
-
-  void place(vec2i origin) override {
-    m_pos = origin;
-
-    auto rs         = resolve();
-    auto& pad       = rs.padding;
-    auto  layout_al = rs.alignment.value_or({});
-
-    vec2i content_origin{
-      m_pos.x + pad.get_left(),
-      m_pos.y + pad.get_top()
-    };
-    vec2i content_size{
-      m_size.x - pad.get_left() - pad.get_right(),
-      m_size.y - pad.get_top()  - pad.get_bottom()
-    };
-
-    vec2i children_extent = compute_children_extent();
-    vec2i cursor          = initial_cursor(layout_al, content_size, children_extent);
-
-    for (node* child : components) {
-      vec2i cs    = child->computed_size();
-      vec2i cross = cross_offset(layout_al, content_size, cs);
-      child->place(content_origin + cursor + cross);
-
-      if (dir_ == direction::vertical)
-        cursor.y += cs.y + defaults::padding;
-      else
-        cursor.x += cs.x + defaults::padding;
+    int w = info.size.x + pad.x;
+    int h = info.size.y + pad.y;
+    if (rs.size) {
+      if (rs.size->x.type == unit::kind::fixed) w = rs.size->x.value;
+      if (rs.size->y.type == unit::kind::fixed) h = rs.size->y.value;
     }
+    m_size = vec2i{ w, h } + marg;
   }
 
   void emit(render_queue& queue) const override {
     auto rs = resolve();
+
     emit_background(queue, rs);
-    for (auto* child : components) child->emit(queue);
+
+    vec2i img_pos{
+      m_pos.x + rs.margin.get_left() + rs.padding.get_left(),
+      m_pos.y + rs.margin.get_top() + rs.padding.get_top()
+    };
+    vec2i img_size{
+      m_size.x - rs.margin.get_left() - rs.margin.get_right() - rs.padding.get_left() - rs.padding.get_right(),
+      m_size.y - rs.margin.get_top() - rs.margin.get_bottom() - rs.padding.get_top() - rs.padding.get_bottom()
+    };
+
+    queue.emplace(
+      primitive::img{
+        .texture = m_texture,
+        .size    = img_size
+      },
+      img_pos
+    );
   }
-
-  void compute(render_queue& queue) { node::compute(queue); }
-
-  template <typename T> requires std::derived_from<std::remove_cvref_t<T>, layout>
-  friend void nalay::poll(T&& root);
-
-protected:
-  void poll() override {
-    node::poll();
-    for (auto* child : components) { child->poll(); }
-  }
-
-private:
-  auto compute_children_extent() const -> vec2i {
-    vec2i extent{};
-    for (node* child : components) {
-      vec2i cs = child->computed_size();
-      if (dir_ == direction::vertical) {
-        extent.y += cs.y + defaults::padding;
-        extent.x  = std::max(extent.x, cs.x);
-      } else {
-        extent.x += cs.x + defaults::padding;
-        extent.y  = std::max(extent.y, cs.y);
-      }
-    }
-    return extent;
-  }
-
-  auto initial_cursor(
-    std::pair<alignment, alignment> alignment,
-    vec2i content_size,
-    vec2i children_extent
-  ) const -> vec2i {
-    vec2i cursor{};
-    if (dir_ == direction::vertical) {
-      if      (alignment.second == alignment::bottom) cursor.y = content_size.y - children_extent.y;
-      else if (alignment.second == alignment::center) cursor.y = (content_size.y - children_extent.y) / 2;
-    } else {
-      if      (alignment.first == alignment::right)  cursor.x = content_size.x - children_extent.x;
-      else if (alignment.first == alignment::center) cursor.x = (content_size.x - children_extent.x) / 2;
-    }
-    return cursor;
-  }
-
-  auto cross_offset(
-    std::pair<alignment, alignment> alignment,
-    vec2i content_size,
-    vec2i child_size
-  ) const -> vec2i {
-    vec2i cross{};
-    if (dir_ == direction::vertical) {
-      if      (alignment.first == alignment::right)  cross.x = content_size.x - child_size.x;
-      else if (alignment.first == alignment::center) cross.x = (content_size.x - child_size.x) / 2;
-    } else {
-      if      (alignment.second == alignment::bottom) cross.y = content_size.y - child_size.y;
-      else if (alignment.second == alignment::center) cross.y = (content_size.y - child_size.y) / 2;
-    }
-    return cross;
-  }
-
-  direction  dir_;
-  child_list components;
 };
 
 template <UIElement... Elements>
-struct columns final : public layout {
-  columns(Elements&&... args) : layout(direction::horizontal, std::forward<Elements&&>(args)...) {}
+struct columns final : public node {
+  columns(Elements&&... args) : node(children_direction::horizontal, std::forward<Elements>(args)...) {}
 };
 
 template <UIElement... Elements>
-struct rows final : public layout {
-  rows(Elements&&... args) : layout(direction::vertical, std::forward<Elements&&>(args)...) {}
+struct rows final : public node {
+  rows(Elements&&... args) : node(children_direction::vertical, std::forward<Elements>(args)...) {}
 };
 
 } // namespace ui
 
-static auto get_ctx() -> context* { return nalay_ctx; }
-static void set_ctx(context* ctx)  { nalay_ctx = ctx;  }
-
 static void request_focus(ui::node* node) {
-  if (nalay_ctx->focused_node == node) return;
-  if (nalay_ctx->focused_node) nalay_ctx->focused_node->on_blur();
-  nalay_ctx->focused_node = node;
-  if (nalay_ctx->focused_node) nalay_ctx->focused_node->on_focus();
+  if (nalay::context::instance().focused_node == node) return;
+  if (nalay::context::instance().focused_node) nalay::context::instance().focused_node->_on_blur();
+  nalay::context::instance().focused_node = node;
+  if (nalay::context::instance().focused_node) nalay::context::instance().focused_node->_on_focus();
 }
 
+static void place(ui::node& root, vec2i origin) { root.place(origin); }
 static void clear_focus() { request_focus(nullptr); }
-static auto focused_node() -> ui::node* { return nalay_ctx->focused_node; }
-static constexpr auto operator|(interactivity a, interactivity b) -> interactivity { return static_cast<interactivity>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b)); }
-static constexpr auto operator&(interactivity a, interactivity b) -> bool { return static_cast<uint8_t>(a) & static_cast<uint8_t>(b); }
+static auto focused_node() -> ui::node* { return nalay::context::instance().focused_node; }
 
-template <typename T> requires std::derived_from<std::remove_cvref_t<T>, ui::layout>
-void poll(T&& root) { std::forward<T>(root).poll(); }
+static constexpr auto operator|(interactivity a, interactivity b) -> interactivity {
+  return static_cast<interactivity>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+static constexpr auto operator&(interactivity a, interactivity b) -> bool {
+  return static_cast<uint8_t>(a) & static_cast<uint8_t>(b);
+}
+
+template <typename T> requires std::derived_from<std::remove_cvref_t<T>, ui::node>
+void poll(T&& root) {
+  std::forward<T>(root).poll();
+}
 
 } // namespace nalay

@@ -192,7 +192,8 @@ struct image_provider {
   void operator=(const image_provider&) = delete;
   void operator=(image_provider&&)      = delete;
 
-  virtual auto load(std::string_view path) -> const font& = 0;
+  virtual void load(std::string_view name, std::string_view path) = 0;
+  virtual auto get(std::string_view name) const -> const texture& = 0;
 };
 
 struct input_provider {
@@ -221,13 +222,30 @@ struct input_provider {
 namespace ui { struct node; } // hacky fix
 
 struct context {
-
-  std::reference_wrapper<font_provider>  fonts;
-  std::reference_wrapper<input_provider> inputs;
   slab_allocator<ui::node*> node_allocator;
-  
+
   ui::node* focused_node = nullptr;
   float delta_time = .0f;
+
+  static auto instance() -> context& {
+    static context ctx;
+    return ctx;
+  }
+
+  void init(
+    std::reference_wrapper<font_provider> fonts,
+    std::reference_wrapper<input_provider> inputs,
+    std::reference_wrapper<image_provider> images
+  ) {
+    m_fonts  = fonts;
+    m_inputs = inputs;
+    m_images = images;
+  }
+  
+  // these should be assigned at initialization
+  auto fonts()  -> std::reference_wrapper<font_provider>  { return m_fonts.value();  }
+  auto inputs() -> std::reference_wrapper<input_provider> { return m_inputs.value(); }
+  auto images() -> std::reference_wrapper<image_provider> { return m_images.value(); }
 
   template <typename T, typename... Args> requires std::derived_from<T, ui::node>
   auto make_node(Args&&... args) -> T* {
@@ -235,6 +253,16 @@ struct context {
     if (not ptr) throw std::bad_alloc();
     return std::construct_at(ptr, std::forward<Args>(args)...);
   }
+private:
+  context() = default;
+  context(context&& other)             = delete;
+  context(const context& other)        = delete;
+  void operator=(context&& other)      = delete;
+  void operator=(const context& other) = delete;
+
+  std::optional<std::reference_wrapper<font_provider>>  m_fonts;
+  std::optional<std::reference_wrapper<input_provider>> m_inputs;
+  std::optional<std::reference_wrapper<image_provider>> m_images;
 };
 
 template<typename T>

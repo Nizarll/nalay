@@ -1,131 +1,152 @@
 #pragma once
 
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <type_traits>
 #include <ostream>
 #include <functional>
+#include <cassert>
+#include <vector>
 
 namespace nalay {
-  
-template <typename T> struct callable_args;
 
-template <typename R, typename... Args>
-struct callable_args<R(Args...)> { using type = std::tuple<Args...>; };
-template <typename R, typename... Args>
-struct callable_args<std::function<R(Args...)>> { using type = std::tuple<Args...>; };
-template <typename T, typename R, typename... Args>
-struct callable_args<R(T::*)(Args...)> { using type = std::tuple<Args...>; };
-template <typename T> requires requires { &T::operator(); }
-struct callable_args<T> : callable_args<decltype(&T::operator())> {};
+#ifdef NDEBUG
+#define NALAY_ASSERT(condition, message)
+#else
+  #define NALAY_ASSERT(condition, message)                                              \
+    do {                                                                                 \
+      if (!(condition)) {                                                                 \
+        std::fprintf(stderr, "Assertion failed: %s\nFile: %s, Line: %d\nMessage: %s\n",    \
+                     #condition, __FILE__, __LINE__, message);                              \
+        std::abort();                                                                        \
+      }                                                                                       \
+    } while (0)
+#endif
 
-template <typename F1, typename F2>
-struct is_same_signature {
-  using t1 = typename callable_args<F1>::type;
-  using t2 = typename callable_args<F2>::type;
-  static constexpr auto value = std::same_as<t1, t2>;
+template <typename T>
+class reactive {
+  T m_value;
+
+  std::vector<std::function<void(const T&)>> m_observers;
+public:
+  reactive() = default;
+  explicit reactive(T&& value) : m_value(std::forward<T>(value)) {}
+
+  void subscribe(auto&& fn) { m_observers.emplace_back(fn); }
+  void set(T&& value) {
+    m_value = value;
+    for (const auto& obs : m_observers) obs(value);
+  }
+
+  auto get() const -> const T& { return m_value; }
 };
 
+struct unit {
+  enum class kind { fixed, percent, grow, fill };
 
-template <typename... Overloads>
-struct function_variant {
-  function_variant() = delete;
+  union {
+    int   value;
+    float factor;
+  };
+  kind type;
 
-  template <typename T> requires (not std::same_as<std::decay_t<T>, function_variant>)
-  function_variant(T&& t) {
-    constexpr auto idx = []<std::size_t... Is>(std::index_sequence<Is...>) {
-      std::size_t result = sizeof...(Overloads);
-      ((is_same_signature<std::decay_t<T>, Overloads>::value
-        ? (result = std::min(result, Is), true) : false) || ...);
-      return result;
-    }(std::index_sequence_for<Overloads...>{});
+  static constexpr auto px(int value)      -> unit { unit u; u.value = value; u.type = kind::fixed;   return u; }
+  static constexpr auto pct(float factor)  -> unit { unit u; u.factor = factor; u.type = kind::percent; return u; }
+  static constexpr auto grow(float factor) -> unit { unit u; u.factor = factor; u.type = kind::grow;  return u; }
+  static constexpr auto fill()             -> unit { unit u; u.value = 0; u.type = kind::fill;    return u; }
 
-    static_assert(idx < sizeof...(Overloads), "Type is not convertible to any overload");
-    using TargetType = std::tuple_element_t<idx, std::tuple<Overloads...>>;
-    m_index = idx;
-    new (m_storage.buffer.data()) TargetType(std::forward<T>(t));
+  constexpr auto operator+(const unit& rhs) const -> unit  {
+    NALAY_ASSERT(type != kind::fill && rhs.type != kind::fill, "cannot add units of type unit::fill.");
+    NALAY_ASSERT(type == rhs.type, "cannot add units which types are different");
+    if (type == kind::fixed) {
+      unit u; u.value = value + rhs.value; u.type = type; return u;
+    } else {
+      unit u; u.factor = factor + rhs.factor; u.type = type; return u;
+    }
   }
-
-  function_variant(const function_variant& other) : m_index(other.m_index) { copy_from(other); }
-  function_variant(function_variant&& other) noexcept : m_index(other.m_index) { move_from(other); }
-
-  auto operator=(const function_variant& other) -> function_variant& {
-    if (this != &other) { this->~function_variant(); m_index = other.m_index; copy_from(other); }
-    return *this;
-  }
-  auto operator=(function_variant&& other) noexcept -> function_variant& {
-    if (this != &other) { this->~function_variant(); m_index = other.m_index; move_from(other); }
-    return *this;
-  }
-
-  ~function_variant() {
-    [this]<std::size_t... Is>(std::index_sequence<Is...>) {
-      auto destroy = [this]<std::size_t I>() {
-        if (m_index == I) {
-          using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
-          std::launder(reinterpret_cast<T*>(m_storage.buffer.data()))->~T();
-        }
-      };
-      (destroy.template operator()<Is>(), ...);
-    }(std::index_sequence_for<Overloads...>{});
-  }
-
-  auto which() const -> size_t { return m_index; }
-
-  template <typename T>
-  auto get(this auto&& self) {
-    if (self.m_index != index_of<T>()) throw std::out_of_range("function_variant::get mismatch");
-    return *std::launder(reinterpret_cast<T*>(self.m_storage.buffer.data()));
-  }
-
-private:
-  template <std::size_t I = 0>
-  void copy_from(const function_variant& other) {
-    if constexpr (I < sizeof...(Overloads)) {
-      if (other.m_index == I) {
-        using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
-        new (m_storage.buffer.data()) T(
-          *std::launder(reinterpret_cast<const T*>(other.m_storage.buffer.data())));
-      } else { copy_from<I + 1>(other); }
+  constexpr auto operator-(const unit& rhs) const -> unit  {
+    NALAY_ASSERT(type != kind::fill && rhs.type != kind::fill, "cannot subtract units of type unit::fill.");
+    NALAY_ASSERT(type == rhs.type, "cannot subtract units which types are different");
+    if (type == kind::fixed) {
+      unit u; u.value = value - rhs.value; u.type = type; return u;
+    } else {
+      unit u; u.factor = factor - rhs.factor; u.type = type; return u;
     }
   }
 
-  template <std::size_t I = 0>
-  void move_from(function_variant& other) {
-    if constexpr (I < sizeof...(Overloads)) {
-      if (other.m_index == I) {
-        using T = std::tuple_element_t<I, std::tuple<Overloads...>>;
-        new (m_storage.buffer.data()) T(
-          std::move(*std::launder(reinterpret_cast<T*>(other.m_storage.buffer.data()))));
-      } else { move_from<I + 1>(other); }
+  template<typename T> requires std::is_arithmetic_v<T>
+  constexpr auto operator*(T scalar) const -> unit  {
+    NALAY_ASSERT(type != kind::fill, "cannot multiply unit::fill.");
+    if (type == kind::fixed) {
+      unit u; u.value = static_cast<int>(value * scalar); u.type = type; return u;
+    } else {
+      unit u; u.factor = factor * static_cast<float>(scalar); u.type = type; return u;
     }
   }
 
-  template <typename T, size_t i, typename First, typename... Rest>
-  static constexpr auto index_of_impl() -> size_t {
-    if constexpr (std::same_as<T, First>) return i;
-    else return index_of_impl<T, i + 1, Rest...>();
-  }
-  template <typename T, size_t i>
-  static constexpr auto index_of_impl() -> size_t { return sizeof...(Overloads); }
-  template <typename T, size_t i = 0>
-  static constexpr auto index_of() -> size_t {
-    static_assert(index_of_impl<T, i, Overloads...>() < sizeof...(Overloads),
-      "Type is not a valid overload");
-    return index_of_impl<T, i, Overloads...>();
+  template<typename T> requires std::is_arithmetic_v<T>
+  constexpr auto operator/(T scalar) const -> unit  {
+    NALAY_ASSERT(type != kind::fill, "cannot divide unit::fill.");
+    NALAY_ASSERT(scalar != 0, "cannot divide a unit by zero.");
+    if (type == kind::fixed) {
+      unit u; u.value = static_cast<int>(value / scalar); u.type = type; return u;
+    } else {
+      unit u; u.factor = factor / static_cast<float>(scalar); u.type = type; return u;
+    }
   }
 
-  static constexpr std::size_t size      = std::max({sizeof(Overloads)...});
-  static constexpr std::size_t alignment = std::max({alignof(Overloads)...});
-  struct alignas(alignment) internal_storage { std::array<std::byte, size> buffer; };
-  internal_storage m_storage;
-  size_t           m_index;
+  constexpr auto operator+=(const unit& rhs) -> unit& {
+    NALAY_ASSERT(type != kind::fill && rhs.type != kind::fill, "cannot add units of type unit::fill.");
+    NALAY_ASSERT(type == rhs.type, "cannot add units which types are different");
+    if (type == kind::fixed) {
+      value += rhs.value;
+    } else {
+      factor += rhs.factor;
+    }
+    return *this;
+  }
+
+  constexpr auto operator-=(const unit& rhs) -> unit& {
+    NALAY_ASSERT(type != kind::fill && rhs.type != kind::fill, "cannot subtract units of type unit::fill.");
+    NALAY_ASSERT(type == rhs.type, "cannot subtract units which types are different");
+    if (type == kind::fixed) {
+      value -= rhs.value;
+    } else {
+      factor -= rhs.factor;
+    }
+    return *this;
+  }
+
+  template<typename T> requires std::is_arithmetic_v<T>
+  constexpr auto operator*=(T scalar) -> unit& {
+    NALAY_ASSERT(type != kind::fill, "cannot multiply unit::fill.");
+    if (type == kind::fixed) {
+      value = static_cast<int>(value * scalar);
+    } else {
+      factor *= static_cast<float>(scalar);
+    }
+    return *this;
+  }
+
+  template<typename T> requires std::is_arithmetic_v<T>
+  constexpr auto operator/=(T scalar) -> unit& {
+    NALAY_ASSERT(type != kind::fill, "cannot divide unit::fill.");
+    NALAY_ASSERT(scalar != 0, "cannot divide a unit by zero.");
+    if (type == kind::fixed) {
+      value = static_cast<int>(value / scalar);
+    } else {
+      factor /= static_cast<float>(scalar);
+    }
+    return *this;
+  }
 };
+
 
 template<typename T>
 concept Number = std::is_arithmetic_v<T>;
 
-template<Number T>
+template<typename T> requires (Number<T> || std::same_as<std::remove_cvref_t<T>, unit>)
 struct vec2 {
   T x, y;
 
@@ -136,11 +157,17 @@ struct vec2 {
   constexpr auto operator+(const vec2& rhs) const -> vec2  { return {x + rhs.x, y + rhs.y}; }
   constexpr auto operator-(const vec2& rhs) const -> vec2  { return {x - rhs.x, y - rhs.y}; }
   constexpr auto operator*(T scalar) const        -> vec2  { return {x * scalar, y * scalar}; }
-  constexpr auto operator/(T scalar) const        -> vec2  { return {x / scalar, y / scalar}; }
+  constexpr auto operator/(T scalar) const        -> vec2  {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec2 by scalar 0");
+    return {x / scalar, y / scalar};
+  }
   constexpr auto operator+=(const vec2& rhs)      -> vec2& { x += rhs.x; y += rhs.y; return *this; }
   constexpr auto operator-=(const vec2& rhs)      -> vec2& { x -= rhs.x; y -= rhs.y; return *this; }
   constexpr auto operator*=(T scalar)             -> vec2& { x *= scalar; y *= scalar; return *this; }
-  constexpr auto operator/=(T scalar)             -> vec2& { x /= scalar; y /= scalar; return *this; }
+  constexpr auto operator/=(T scalar)             -> vec2& {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec2 by scalar 0");
+    x /= scalar; y /= scalar; return *this;
+  }
   constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y); }
 
   friend    auto operator<<(std::ostream& os, const vec2& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ")"; }
@@ -158,11 +185,17 @@ struct vec3 {
   constexpr auto operator+(const vec3& rhs) const -> vec3  { return {x + rhs.x, y + rhs.y, z + rhs.z}; }
   constexpr auto operator-(const vec3& rhs) const -> vec3  { return {x - rhs.x, y - rhs.y, z - rhs.z}; }
   constexpr auto operator*(T scalar) const        -> vec3  { return {x * scalar, y * scalar, z * scalar}; }
-  constexpr auto operator/(T scalar) const        -> vec3  { return {x / scalar, y / scalar, z / scalar}; }
+  constexpr auto operator/(T scalar) const        -> vec3  {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec3 by scalar 0");
+    return {x / scalar, y / scalar, z / scalar};
+  }
   constexpr auto operator+=(const vec3& rhs)      -> vec3& { x += rhs.x; y += rhs.y; z += rhs.z; return *this; }
   constexpr auto operator-=(const vec3& rhs)      -> vec3& { x -= rhs.x; y -= rhs.y; z -= rhs.z; return *this; }
   constexpr auto operator*=(T scalar)             -> vec3& { x *= scalar; y *= scalar; z *= scalar; return *this; }
-  constexpr auto operator/=(T scalar)             -> vec3& { x /= scalar; y /= scalar; z /= scalar; return *this; }
+  constexpr auto operator/=(T scalar)             -> vec3& {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec3 by scalar 0");
+    x /= scalar; y /= scalar; z /= scalar; return *this;
+  }
   constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y + z * z); }
 
   friend    auto operator<<(std::ostream& os, const vec3& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ", " << v.z << ")"; }
@@ -181,11 +214,17 @@ struct vec4 {
   constexpr auto operator+(const vec4& rhs) const -> vec4  { return {x + rhs.x, y + rhs.y, z + rhs.z, w + rhs.w}; }
   constexpr auto operator-(const vec4& rhs) const -> vec4  { return {x - rhs.x, y - rhs.y, z - rhs.z, w - rhs.w}; }
   constexpr auto operator*(T scalar) const        -> vec4  { return {x * scalar, y * scalar, z * scalar, w * scalar}; }
-  constexpr auto operator/(T scalar) const        -> vec4  { return {x / scalar, y / scalar, z / scalar, w / scalar}; }
+  constexpr auto operator/(T scalar) const        -> vec4  {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec4 by scalar 0");
+    return {x / scalar, y / scalar, z / scalar, w / scalar};
+  }
   constexpr auto operator+=(const vec4& rhs)      -> vec4& { x += rhs.x; y += rhs.y; z += rhs.z; w += rhs.w; return *this; }
   constexpr auto operator-=(const vec4& rhs)      -> vec4& { x -= rhs.x; y -= rhs.y; z -= rhs.z; w -= rhs.w; return *this; }
   constexpr auto operator*=(T scalar)             -> vec4& { x *= scalar; y *= scalar; z *= scalar; w *= scalar; return *this; }
-  constexpr auto operator/=(T scalar)             -> vec4& { x /= scalar; y /= scalar; z /= scalar; w /= scalar; return *this; }
+  constexpr auto operator/=(T scalar)             -> vec4& {
+    NALAY_ASSERT(scalar != 0, "cannot divide vec4 by scalar 0");
+    x /= scalar; y /= scalar; z /= scalar; w /= scalar; return *this;
+  }
   constexpr auto magnitude() -> double { return std::sqrt(x * x + y * y + z * z + w * w); }
 
   friend    auto operator<<(std::ostream& os, const vec4& v) -> std::ostream& { return os << "(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ")"; }
