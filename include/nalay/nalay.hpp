@@ -235,7 +235,6 @@ struct node {
     , m_interactivity(other.m_interactivity)
     , m_hovered(false)
   {
-    // Update parent pointers of moved children
     for (auto& child : m_components) {
       child->m_parent = this;
     }
@@ -804,11 +803,15 @@ struct input : public node {
     };
   }
 
-  void erase_character() {
+  void erase_character() requires std::same_as<T, std::string> {
     if (!m_value.empty()) {
       do { m_value.pop_back(); }
       while (!m_value.empty() && (m_value.back() & 0xC0) == 0x80);
     }
+  }
+
+  void erase_digit() requires std::is_arithmetic_v<T> {
+    m_value = m_value / 10;
   }
 
   auto value() const -> const T& { return m_value; }
@@ -826,7 +829,11 @@ struct input : public node {
       return;
     }
     if (m_erased_timer > .01f) {
-      erase_character();
+      if constexpr (std::same_as<T, std::string>) {
+        erase_character();
+      } else if constexpr (std::is_arithmetic_v<T>) {
+        erase_digit();
+      }
       m_erased_timer = 0.0f;
     } else {
       m_erased_timer += nalay::context::instance().delta_time;
@@ -835,11 +842,13 @@ struct input : public node {
 
   void _on_key(keyboard_event event) override {
     if constexpr (std::is_arithmetic_v<T>) {
+      if (event.key == nalay::key::backspace) { erase_digit(); return; }
       if (not std::isdigit(static_cast<char>(event.key))) return;
-      if (m_value >= (std::numeric_limits<T>::max() - event.key) / 10) {
+      auto digit = static_cast<char>(event.key) - '0';
+      if (m_value >= (std::numeric_limits<T>::max() - digit) / 10) {
         m_value = std::numeric_limits<T>::max();
       } else {
-        m_value = m_value * 10 + static_cast<T>(static_cast<char>(event.key) - '0');
+        m_value = m_value * 10 + static_cast<T>(digit);
       }
       m_changed_listeners.notify_all(m_value);
     }

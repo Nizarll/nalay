@@ -8,38 +8,116 @@
 #include <functional>
 #include <cassert>
 #include <vector>
+#include <iostream>
 
 namespace nalay {
 
 #ifdef NDEBUG
 #define NALAY_ASSERT(condition, message)
 #else
-  #define NALAY_ASSERT(condition, message)                                              \
-    do {                                                                                 \
-      if (!(condition)) {                                                                 \
-        std::fprintf(stderr, "Assertion failed: %s\nFile: %s, Line: %d\nMessage: %s\n",    \
-                     #condition, __FILE__, __LINE__, message);                              \
-        std::abort();                                                                        \
-      }                                                                                       \
-    } while (0)
+#define NALAY_ASSERT(condition, message)                                              \
+do {                                                                                   \
+  if (!(condition)) {                                                                   \
+    std::fprintf(stderr, "Assertion failed: %s\nFile: %s, Line: %d\nMessage: %s\n",      \
+                 #condition, __FILE__, __LINE__, message);                                \
+    std::abort();                                                                          \
+  }                                                                                         \
+} while (0)
 #endif
 
-template <typename T>
-class reactive {
-  T m_value;
-
-  std::vector<std::function<void(const T&)>> m_observers;
+class reactive_base {
 public:
-  reactive() = default;
-  explicit reactive(T&& value) : m_value(std::forward<T>(value)) {}
+  virtual ~reactive_base() = default;
+  virtual void add_observer(std::function<void()> fn) = 0;
+};
 
-  void subscribe(auto&& fn) { m_observers.emplace_back(fn); }
-  void set(T&& value) {
-    m_value = value;
-    for (const auto& obs : m_observers) obs(value);
+template <typename T>
+class reactive : public reactive_base, public std::enable_shared_from_this<reactive<T>> {
+  std::shared_ptr<T> m_value;
+  std::shared_ptr<std::vector<std::function<void()>>> m_observers;
+  std::vector<std::weak_ptr<reactive_base>> m_dependencies;
+
+  void notify() { for (auto& obs : *m_observers) obs(); }
+public:
+  reactive()
+    : m_value(std::make_shared<T>()),
+      m_observers(std::make_shared<std::vector<std::function<void()>>>()) {}
+
+  explicit reactive(T value)
+    : m_value(std::make_shared<T>(std::move(value))),
+      m_observers(std::make_shared<std::vector<std::function<void()>>>()) {}
+
+  reactive(const reactive& other)
+    : m_value(other.m_value),
+      m_observers(other.m_observers),
+      m_dependencies(other.m_dependencies) {}
+
+  reactive(reactive&& other) noexcept
+    : m_value(std::move(other.m_value)),
+      m_observers(std::move(other.m_observers)),
+      m_dependencies(std::move(other.m_dependencies)) {}
+
+  reactive& operator=(const reactive& other) {
+    if (this != &other) {
+      m_value = other.m_value;
+      m_observers = other.m_observers;
+      m_dependencies = other.m_dependencies;
+    }
+    return *this;
   }
 
-  auto get() const -> const T& { return m_value; }
+  reactive& operator=(reactive&& other) noexcept {
+    if (this != &other) {
+      m_value = std::move(other.m_value);
+      m_observers = std::move(other.m_observers);
+      m_dependencies = std::move(other.m_dependencies);
+    }
+    return *this;
+  }
+
+  void add_observer(std::function<void()> fn) override { m_observers->emplace_back(std::move(fn)); }
+
+  template <typename Fn>
+  void subscribe(Fn&& fn) {
+    add_observer([this, fn = std::forward<Fn>(fn)]() mutable {
+      fn();
+    });
+  }
+
+  template <typename Functor, typename... States>
+  requires (std::is_invocable_v<Functor>)
+  explicit reactive(Functor&& func, States&... states)
+    : m_value(std::make_shared<T>()),
+      m_observers(std::make_shared<std::vector<std::function<void()>>>()) {
+    auto compute = std::forward<Functor>(func);
+
+    *m_value = compute();
+
+    auto value_ptr = m_value;
+    auto observers_ptr = m_observers;
+
+    auto update = [value_ptr, observers_ptr, compute]() mutable {
+      *value_ptr = compute();
+      for (auto& obs : *observers_ptr)
+        obs();
+    };
+
+    (states.subscribe(update), ...);
+  }
+
+  void set(const T& value) {
+    *m_value = value;
+    notify();
+  }
+
+  void set(T&& value) {
+    *m_value = std::move(value);
+    notify();
+  }
+
+  const T& get() const {
+    return *m_value;
+  }
 };
 
 struct unit {
